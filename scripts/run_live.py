@@ -1,0 +1,392 @@
+#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import logging
+import time
+from uuid import uuid4
+from datetime import datetime, timezone, timedelta
+from typing import Optional, Dict, Any
+
+import pandas as pd
+import MetaTrader5 as mt5
+
+from config.settings import get_settings
+from config.sessions import SessionTimes, SessionValidator
+from log_utils.logger_setup import setup_logging, get_logger
+from core.opening_range_scalp import OpeningRangeScalp
+from core.institutional_zone import InstitutionalZoneDetector
+from connectors.mt5_connector import MT5Connector, MT5ConnectorError
+from database.mongo_client import MongoClient
+from telegram.alerts import TelegramNotifier, fmt_et
+
+logger = logging.getLogger(__name__)
+trade_logger = get_logger("trade")
+
+
+class ScalperBot:
+    POLL_INTERVAL_SECONDS = 30
+    M15_REFRESH_SECONDS = 300
+    HEARTBEAT_SECONDS = 21600
+
+    def __init__(self):
+        self.settings = get_settings()
+        self.session_times = SessionTimes()
+        self.connector = MT5Connector()
+        self.zone_detector = InstitutionalZoneDetector()
+        self.orb = OpeningRangeScalp(zone_detector=self.zone_detector)
+        self.telegram = TelegramNotifier()
+        self.mongo = MongoClient()
+        self._running = False
+        self._current_date: Optional[str] = None
+        self._trades_today = 0
+        self._position: Optional[Dict[str, Any]] = None
+        self._df_15min: Optional[pd.DataFrame] = None
+        self._m15_last_refresh: float = 0
+        self._last_heartbeat: float = 0
+        self._start_time: datetime = datetime.now(timezone.utc)
+        self._last_signal_time: Optional[datetime] = None
+
+    def _load_15min_data(self) -> None:
+        try:
+            self.connector.connect()
+            all_chunks = []
+            current_end = datetime.now(timezone.utc) + timedelta(hours=1)
+            while current_end > datetime.now(timezone.utc) - timedelta(days=90):
+                chunk = mt5.copy_rates_from("XAUUSD", mt5.TIMEFRAME_M15, current_end, 50000)
+                if chunk is None or len(chunk) == 0:
+                    break
+                chunk_df = pd.DataFrame(chunk)
+                chunk_df["time"] = pd.to_datetime(chunk_df["time"], unit="s")
+                chunk_df.set_index("time", inplace=True)
+                all_chunks.append(chunk_df)
+                current_end = chunk_df.index.min()
+                if len(all_chunks) > 1 and (all_chunks[-1].index.min() == all_chunks[-2].index.min()):
+                    break
+            if not all_chunks:
+                logger.error("No M15 data loaded")
+                return
+            df = pd.concat(all_chunks).sort_index()
+            df = df[~df.index.duplicated(keep="last")][["open", "high", "low", "close", "tick_volume"]]
+            self._df_15min = df
+            self.zone_detector.build_historical(df)
+            logger.info(f"M15 data refreshed: {len(df)} bars, {len(self.zone_detector.zones)} zones built")
+        except Exception as e:
+            logger.warning(f"M15 load failed: {e}")
+
+    def _check_new_day(self) -> None:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self._current_date != today:
+            self._current_date = today
+            self._trades_today = 0
+            self.orb.reset()
+            logger.info(f"New trading day: {today}")
+
+    def _calc_lot_size(self, entry: float, sl: float, balance: float) -> float:
+        dist = abs(entry - sl)
+        if dist <= 0:
+            return 0.01
+        risk_amount = balance * (self.settings.risk_percent / 100.0)
+        gold_oz_per_lot = 100.0
+        return max(0.01, min(round(risk_amount / (dist * gold_oz_per_lot), 2), 10.0))
+
+    def _manage_position(self, df: pd.DataFrame, i: int, current_time: datetime) -> bool:
+        if self._position is None:
+            return False
+
+        bar = df.iloc[i]
+        trail_step = abs(self._position["entry"] - self._position["original_sl"])
+
+        if not self._position.get("breakeven_hit", False):
+            if self._position["type"] == "buy":
+                if bar["high"] >= self._position["entry"] + trail_step:
+                    self._position["sl"] = self._position["entry"]
+                    self._position["breakeven_hit"] = True
+                    self._position["trail_count"] = 1
+                    logger.info(f"BE: SL moved to entry")
+            else:
+                if bar["low"] <= self._position["entry"] - trail_step:
+                    self._position["sl"] = self._position["entry"]
+                    self._position["breakeven_hit"] = True
+                    self._position["trail_count"] = 1
+                    logger.info(f"BE: SL moved to entry")
+        else:
+            trail_count = self._position.get("trail_count", 1)
+            if self._position["type"] == "buy":
+                next_level = self._position["entry"] + trail_step * (trail_count + 1)
+                if bar["high"] >= next_level:
+                    self._position["trail_count"] = trail_count + 1
+                    self._position["sl"] = self._position["entry"] + trail_step * trail_count
+                    logger.info(f"TRAIL: SL={self._position['sl']:.2f} (level {trail_count+1})")
+            else:
+                next_level = self._position["entry"] - trail_step * (trail_count + 1)
+                if bar["low"] <= next_level:
+                    self._position["trail_count"] = trail_count + 1
+                    self._position["sl"] = self._position["entry"] - trail_step * trail_count
+                    logger.info(f"TRAIL: SL={self._position['sl']:.2f} (level {trail_count+1})")
+
+        sl_hit = False
+        if self._position["type"] == "buy":
+            if bar["low"] <= self._position["sl"]:
+                sl_hit = True
+                exit_price = self._position["sl"]
+        else:
+            if bar["high"] >= self._position["sl"]:
+                sl_hit = True
+                exit_price = self._position["sl"]
+
+        if sl_hit:
+            price_diff = exit_price - self._position["entry"]
+            if self._position["type"] == "sell":
+                price_diff = -price_diff
+            commission = self.settings.backtest_commission * self._position["lot_size"]
+            profit = price_diff * self._position["lot_size"] * 100 - commission
+
+            self._position["exit"] = exit_price
+            self._position["profit"] = round(profit, 2)
+            self._position["commission"] = round(commission, 2)
+            self._position["exit_reason"] = "sl"
+            self._position["close_time"] = current_time
+
+            logger.info(
+                f"CLOSE {self._position['type']} @ {exit_price:.2f} "
+                f"P=${profit:.2f} ({self._position['exit_reason']})"
+            )
+            trade_logger.info(
+                f"CLOSE {self._position['type']} {self._position['entry']:.2f} "
+                f"{exit_price:.2f} {profit:.2f}",
+                extra={"trade": self._position},
+            )
+            self.telegram.alert_trade_close(self._position)
+            self.mongo.save_trade({
+                "trade_id": self._position.get("trade_id", ""),
+                "symbol": self.settings.symbol,
+                "signal_type": self._position["type"],
+                "entry_price": self._position["entry"],
+                "stop_loss": self._position.get("original_sl", self._position["sl"]),
+                "lot_size": self._position["original_lot_size"],
+                "exit_price": exit_price,
+                "profit": round(profit, 2),
+                "commission": round(commission, 2),
+                "exit_reason": "sl",
+                "close_time": current_time,
+                "session_date": current_time.strftime("%Y-%m-%d"),
+                "strategy": "orb_scalp",
+            })
+            self._position = None
+            return True
+
+        return False
+
+    def initialize(self) -> bool:
+        logger.info("Initializing scalper bot...")
+
+        try:
+            self.connector.connect()
+            logger.info("MT5 connected")
+        except MT5ConnectorError as e:
+            logger.error(f"MT5 connection failed: {e}")
+            self.telegram.alert_error(f"MT5 connection failed: {e}")
+            return False
+
+        if not self.mongo.connect():
+            logger.warning("MongoDB unavailable — trades will not be persisted to database")
+
+        self._load_15min_data()
+
+        account = self.connector.get_account_info()
+        logger.info(f"Account: {account['login']}, Balance: ${account['balance']:.2f}")
+
+        self.telegram._send(
+            f"\U0001f916 <b>ORB Scalper Bot Started</b>\n"
+            f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+            f"Symbol: {self.settings.symbol}\n"
+            f"Balance: ${account['balance']:.2f}\n"
+            f"Strategy: ORB + S&D Scalper\n"
+            f"Risk: {self.settings.risk_percent}% | Max/Day: {self.settings.max_daily_trades}\n"
+            f"Sessions: NY only (13:00-16:00 UTC)\n"
+            f"Time: {fmt_et(fmt='%I:%M %p')}"
+        )
+
+        return True
+
+    def shutdown(self) -> None:
+        logger.info("Shutting down...")
+
+        if self._position is not None:
+            logger.info("Closing open position...")
+            try:
+                positions = self.connector.get_positions(self.settings.symbol)
+                for p in positions:
+                    if p.get("ticket") == self._position.get("deal"):
+                        self.connector.close_position(ticket=p["ticket"])
+                        break
+            except Exception as e:
+                logger.error(f"Failed to close position on shutdown: {e}")
+
+        self.telegram._send(
+            f"\U0001f6ab <b>ORB Scalper Bot Stopped</b>"
+        )
+        self.mongo.disconnect()
+        self.connector.disconnect()
+        self._running = False
+
+    def run(self) -> None:
+        if not self.initialize():
+            logger.error("Initialization failed, exiting")
+            return
+
+        self._running = True
+        logger.info("Scalper bot started")
+
+        try:
+            while self._running:
+                now = datetime.now(timezone.utc)
+
+                if not self.session_times.is_trading_hours(now):
+                    time.sleep(60)
+                    continue
+
+                if SessionValidator.is_friday_close(now):
+                    remaining = (
+                        datetime(now.year, now.month, now.day, 17, 0) - now
+                    ).total_seconds()
+                    if remaining <= 0:
+                        logger.info("Friday close, shutting down")
+                        break
+
+                self._check_new_day()
+
+                if not self.session_times.is_ny_trade_window(now):
+                    time.sleep(60)
+                    continue
+
+                if time.time() - self._m15_last_refresh > self.M15_REFRESH_SECONDS:
+                    self._load_15min_data()
+                    self._m15_last_refresh = time.time()
+
+                try:
+                    rates = self.connector.get_rates("XAUUSD", mt5.TIMEFRAME_M5, 300)
+                except MT5ConnectorError as e:
+                    logger.error(f"Failed to get rates: {e}")
+                    time.sleep(10)
+                    continue
+
+                if rates.empty or len(rates) < 60:
+                    time.sleep(10)
+                    continue
+
+                i = len(rates) - 1
+                current_time = rates.index[i]
+
+                bar = rates.iloc[i]
+                if self._df_15min is not None:
+                    self.zone_detector.update_test_status(bar["high"], bar["low"])
+
+                self._manage_position(rates, i, current_time)
+
+                if self._position is None and self._trades_today < self.settings.max_daily_trades:
+                    throttled = self._last_signal_time and (current_time - self._last_signal_time).total_seconds() < 180
+                    if not throttled:
+                        window_df = rates.iloc[max(0, i - 200):i + 1]
+                        df_15min_window = self._df_15min[self._df_15min.index <= current_time] if self._df_15min is not None else pd.DataFrame()
+                        signal = self.orb.analyze(window_df, df_15min_window, current_time)
+
+                        if signal is not None:
+                            balance = self.connector.get_account_info()["balance"]
+                            lot_size = self._calc_lot_size(
+                                signal["entry"], signal["sl"], balance
+                            )
+
+                            if lot_size >= 0.01:
+                                mt5_type = mt5.ORDER_TYPE_BUY if signal["direction"] == "buy" else mt5.ORDER_TYPE_SELL
+
+                                try:
+                                    order = self.connector.place_order(
+                                        symbol=self.settings.symbol,
+                                        order_type=mt5_type,
+                                        volume=lot_size,
+                                        price=signal["entry"],
+                                        sl=signal["sl"],
+                                        tp=signal["tp"],
+                                        comment=f"ORB {signal.get('setup', '')}",
+                                    )
+                                    self._last_signal_time = current_time
+                                    self._trades_today += 1
+                                    trade_id = str(uuid4())
+                                    self._position = {
+                                        "type": signal["direction"],
+                                        "entry": order["price"],
+                                        "sl": signal["sl"],
+                                        "tp": signal["tp"],
+                                        "lot_size": lot_size,
+                                        "original_sl": signal["sl"],
+                                        "original_lot_size": lot_size,
+                                        "breakeven_hit": False,
+                                        "trail_count": 0,
+                                        "trade_id": trade_id,
+                                        "open_time": current_time,
+                                        "deal": order.get("deal", 0),
+                                    }
+                                    self.mongo.save_trade({
+                                        "trade_id": trade_id,
+                                        "symbol": self.settings.symbol,
+                                        "signal_type": signal["direction"],
+                                        "entry_price": order["price"],
+                                        "stop_loss": signal["sl"],
+                                        "take_profit": signal["tp"],
+                                        "lot_size": lot_size,
+                                        "session_date": current_time.strftime("%Y-%m-%d"),
+                                        "open_time": current_time,
+                                        "strategy": "orb_scalp",
+                                        "setup_notes": signal.get("setup", ""),
+                                    })
+                                    logger.info(
+                                        f"ORB TRADE {signal['direction'].upper()} "
+                                        f"{lot_size} @ {order['price']:.2f} "
+                                        f"SL={signal['sl']:.2f} TP={signal['tp']:.2f}"
+                                    )
+                                    trade_logger.info(
+                                        f"OPEN {signal['direction'].upper()} {lot_size} "
+                                        f"{order['price']:.2f} {signal['sl']:.2f} {signal['tp']:.2f}",
+                                        extra={"trade": self._position},
+                                    )
+                                    self.telegram.alert_trade_open({
+                                        "type": signal["direction"],
+                                        "entry": order["price"],
+                                        "sl": signal["sl"],
+                                        "tp": signal["tp"],
+                                        "lot_size": lot_size,
+                                    })
+                                except MT5ConnectorError as e:
+                                    logger.error(f"Order failed: {e}")
+                                    self.telegram.alert_error(f"Order failed: {e}")
+
+                if time.time() - self._last_heartbeat > self.HEARTBEAT_SECONDS:
+                    self._last_heartbeat = time.time()
+                    acct = self.connector.get_account_info()
+                    pos_status = "Open" if self._position else "None"
+                    self.telegram.alert_heartbeat(
+                        f"Balance: ${acct['balance']:.2f}\n"
+                        f"Running since: {fmt_et(self._start_time, '%Y-%m-%d %I:%M %p')}\n"
+                        f"Status: \u2705 Online\n"
+                        f"Position: {pos_status} | Today: {self._trades_today}/{self.settings.max_daily_trades}"
+                    )
+
+                time.sleep(self.POLL_INTERVAL_SECONDS)
+
+        except KeyboardInterrupt:
+            logger.info("Shutdown requested")
+        except Exception as e:
+            logger.error(f"Fatal error: {e}", exc_info=True)
+            self.telegram.alert_error(f"Fatal error: {e}")
+        finally:
+            self.shutdown()
+
+
+if __name__ == "__main__":
+    setup_logging()
+    bot = ScalperBot()
+    bot.run()

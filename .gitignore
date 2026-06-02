@@ -1,0 +1,52 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+*.spec
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Logs
+logs/
+*.log
+
+# Screenshots / Charts
+screenshots/
+*.png
+*.html
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Data / Temp
+data/
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Docker (compose has local paths, don't commit)
+docker-compose.yml
+Dockerfile
+
+# Bot runtime
+bot.pid
+*.pid
