@@ -92,88 +92,119 @@ class ScalperBot:
         gold_oz_per_lot = 100.0
         return max(0.01, min(round(risk_amount / (dist * gold_oz_per_lot), 2), 10.0))
 
+    def _close_partial(self, lots: float, price: float, reason: str, current_time: datetime) -> None:
+        pos = self._position
+        is_buy = pos["type"] == "buy"
+        pdiff = price - pos["entry"]
+        if not is_buy:
+            pdiff = -pdiff
+        comm = self.settings.backtest_commission * lots
+        profit = round(pdiff * lots * 100 - comm, 2)
+
+        pos["_last_price"] = price
+        pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
+        pos["remaining_lots"] = round(pos["remaining_lots"] - lots, 2)
+
+        ticket = pos.get("ticket")
+        if ticket:
+            try:
+                self.connector.close_position({
+                    "symbol": self.settings.symbol,
+                    "ticket": ticket,
+                    "volume": lots,
+                    "type": pos["type"],
+                })
+            except Exception as e:
+                logger.error(f"Partial close {reason} failed: {e}")
+
+        logger.info(
+            f"PARTIAL {reason.upper()}: {lots:.2f} lots @ {price:.2f} "
+            f"P=${profit:.2f} (cumulative: ${pos['pnl']:.2f})"
+        )
+        trade_logger.info(
+            f"PARTIAL {pos['type'].upper()} {lots:.2f} {pos['entry']:.2f} {price:.2f} {profit:.2f}",
+            extra={"trade": pos, "partial_reason": reason, "partial_lots": lots},
+        )
+
     def _manage_position(self, df: pd.DataFrame, i: int, current_time: datetime) -> bool:
         if self._position is None:
             return False
 
         bar = df.iloc[i]
-        trail_step = abs(self._position["entry"] - self._position["original_sl"])
+        entry = self._position["entry"]
+        sl_dist = abs(entry - self._position["original_sl"])
+        is_buy = self._position["type"] == "buy"
 
-        if not self._position.get("breakeven_hit", False):
-            if self._position["type"] == "buy":
-                if bar["high"] >= self._position["entry"] + trail_step:
-                    self._position["sl"] = self._position["entry"]
-                    self._position["breakeven_hit"] = True
-                    self._position["trail_count"] = 1
-                    logger.info(f"BE: SL moved to entry")
-            else:
-                if bar["low"] <= self._position["entry"] - trail_step:
-                    self._position["sl"] = self._position["entry"]
-                    self._position["breakeven_hit"] = True
-                    self._position["trail_count"] = 1
-                    logger.info(f"BE: SL moved to entry")
-        else:
-            trail_count = self._position.get("trail_count", 1)
-            if self._position["type"] == "buy":
-                next_level = self._position["entry"] + trail_step * (trail_count + 1)
-                if bar["high"] >= next_level:
-                    self._position["trail_count"] = trail_count + 1
-                    self._position["sl"] = self._position["entry"] + trail_step * trail_count
-                    logger.info(f"TRAIL: SL={self._position['sl']:.2f} (level {trail_count+1})")
-            else:
-                next_level = self._position["entry"] - trail_step * (trail_count + 1)
-                if bar["low"] <= next_level:
-                    self._position["trail_count"] = trail_count + 1
-                    self._position["sl"] = self._position["entry"] - trail_step * trail_count
-                    logger.info(f"TRAIL: SL={self._position['sl']:.2f} (level {trail_count+1})")
+        tp1_level = entry + sl_dist if is_buy else entry - sl_dist
+        tp2_level = entry + 2 * sl_dist if is_buy else entry - 2 * sl_dist
+        tp3_level = entry + 3 * sl_dist if is_buy else entry - 3 * sl_dist
 
-        sl_hit = False
-        if self._position["type"] == "buy":
-            if bar["low"] <= self._position["sl"]:
-                sl_hit = True
-                exit_price = self._position["sl"]
-        else:
-            if bar["high"] >= self._position["sl"]:
-                sl_hit = True
-                exit_price = self._position["sl"]
+        # TP1: close 30% at 1:1, move SL on rest to BE
+        if not self._position.get("tp1_hit", False) and \
+           ((is_buy and bar["high"] >= tp1_level) or (not is_buy and bar["low"] <= tp1_level)):
+            self._close_partial(self._position["tp1_lots"], tp1_level, "tp1", current_time)
+            self._position["sl"] = entry
+            self._position["tp1_hit"] = True
+            if self._position["remaining_lots"] > 0:
+                self.connector.modify_position(
+                    ticket=self._position["ticket"],
+                    sl=entry if is_buy else entry,
+                )
 
-        if sl_hit:
-            price_diff = exit_price - self._position["entry"]
-            if self._position["type"] == "sell":
-                price_diff = -price_diff
-            commission = self.settings.backtest_commission * self._position["lot_size"]
-            profit = price_diff * self._position["lot_size"] * 100 - commission
+        # TP2: close 40% at 1:2 (can fire same bar as TP1)
+        if self._position.get("tp1_hit", False) and not self._position.get("tp2_hit", False) and \
+           self._position["remaining_lots"] > 0 and \
+           ((is_buy and bar["high"] >= tp2_level) or (not is_buy and bar["low"] <= tp2_level)):
+            lots = min(self._position["tp2_lots"], self._position["remaining_lots"])
+            if lots > 0:
+                self._close_partial(lots, tp2_level, "tp2", current_time)
+                self._position["tp2_hit"] = True
 
-            self._position["exit"] = exit_price
-            self._position["profit"] = round(profit, 2)
-            self._position["commission"] = round(commission, 2)
-            self._position["exit_reason"] = "sl"
-            self._position["close_time"] = current_time
+        # TP3: close remaining 30% at 1:3 (can fire same bar as TP1/TP2)
+        if self._position.get("tp1_hit", False) and self._position.get("tp2_hit", False) and \
+           not self._position.get("tp3_hit", False) and self._position["remaining_lots"] > 0 and \
+           ((is_buy and bar["high"] >= tp3_level) or (not is_buy and bar["low"] <= tp3_level)):
+            self._close_partial(self._position["remaining_lots"], tp3_level, "tp3", current_time)
+            self._position["tp3_hit"] = True
+
+        # SL/be check on remaining position
+        if self._position["remaining_lots"] > 0 and \
+           ((is_buy and bar["low"] <= self._position["sl"]) or (not is_buy and bar["high"] >= self._position["sl"])):
+            self._close_partial(self._position["remaining_lots"], self._position["sl"],
+                                "be" if self._position.get("tp1_hit") else "sl", current_time)
+
+        if self._position["remaining_lots"] <= 0:
+            trade = self._position
+            trade["exit"] = trade.get("_last_price", None)
+            trade["exit_reason"] = "tp3" if trade.get("tp3_hit") else \
+                                   ("tp2" if trade.get("tp2_hit") else "sl/be")
+            trade["close_time"] = current_time
 
             logger.info(
-                f"CLOSE {self._position['type']} @ {exit_price:.2f} "
-                f"P=${profit:.2f} ({self._position['exit_reason']})"
+                f"CLOSE {trade['type']} {trade['entry']:.2f} "
+                f"P=${trade['pnl']:.2f} ({trade['exit_reason']})"
             )
             trade_logger.info(
-                f"CLOSE {self._position['type']} {self._position['entry']:.2f} "
-                f"{exit_price:.2f} {profit:.2f}",
-                extra={"trade": self._position},
+                f"CLOSE {trade['type']} {trade['entry']:.2f} {trade['close_time']} {trade['pnl']:.2f}",
+                extra={"trade": trade},
             )
-            self.telegram.alert_trade_close(self._position)
+            self.telegram.alert_trade_close(trade)
             self.mongo.save_trade({
-                "trade_id": self._position.get("trade_id", ""),
+                "trade_id": trade.get("trade_id", ""),
                 "symbol": self.settings.symbol,
-                "signal_type": self._position["type"],
-                "entry_price": self._position["entry"],
-                "stop_loss": self._position.get("original_sl", self._position["sl"]),
-                "lot_size": self._position["original_lot_size"],
-                "exit_price": exit_price,
-                "profit": round(profit, 2),
-                "commission": round(commission, 2),
-                "exit_reason": "sl",
+                "signal_type": trade["type"],
+                "entry_price": trade["entry"],
+                "stop_loss": trade.get("original_sl"),
+                "lot_size": trade["original_lot_size"],
+                "exit_price": trade.get("exit"),
+                "profit": trade["pnl"],
+                "exit_reason": trade["exit_reason"],
                 "close_time": current_time,
                 "session_date": current_time.strftime("%Y-%m-%d"),
                 "strategy": "orb_scalp",
+                "tp1_hit": trade.get("tp1_hit", False),
+                "tp2_hit": trade.get("tp2_hit", False),
+                "tp3_hit": trade.get("tp3_hit", False),
             })
             self._position = None
             return True
@@ -220,8 +251,8 @@ class ScalperBot:
             try:
                 positions = self.connector.get_positions(self.settings.symbol)
                 for p in positions:
-                    if p.get("ticket") == self._position.get("deal"):
-                        self.connector.close_position(ticket=p["ticket"])
+                    if p["ticket"] == self._position.get("ticket"):
+                        self.connector.close_position(p)
                         break
             except Exception as e:
                 logger.error(f"Failed to close position on shutdown: {e}")
@@ -316,6 +347,12 @@ class ScalperBot:
                                     self._last_signal_time = current_time
                                     self._trades_today += 1
                                     trade_id = str(uuid4())
+                                    cents = round(lot_size * 100)
+                                    tp1_c = max(1, int(cents * 0.3))
+                                    tp2_c = max(1, int(cents * 0.4))
+                                    if tp1_c + tp2_c > cents:
+                                        tp2_c = cents - tp1_c
+                                    tp3_c = cents - tp1_c - tp2_c
                                     self._position = {
                                         "type": signal["direction"],
                                         "entry": order["price"],
@@ -324,11 +361,17 @@ class ScalperBot:
                                         "lot_size": lot_size,
                                         "original_sl": signal["sl"],
                                         "original_lot_size": lot_size,
-                                        "breakeven_hit": False,
-                                        "trail_count": 0,
+                                        "tp1_lots": tp1_c / 100.0,
+                                        "tp2_lots": tp2_c / 100.0,
+                                        "tp3_lots": tp3_c / 100.0,
+                                        "remaining_lots": lot_size,
+                                        "pnl": 0.0,
+                                        "tp1_hit": False,
+                                        "tp2_hit": False,
+                                        "tp3_hit": False,
                                         "trade_id": trade_id,
                                         "open_time": current_time,
-                                        "deal": order.get("deal", 0),
+                                        "ticket": order.get("order", 0),
                                     }
                                     self.mongo.save_trade({
                                         "trade_id": trade_id,
@@ -353,13 +396,7 @@ class ScalperBot:
                                         f"{order['price']:.2f} {signal['sl']:.2f} {signal['tp']:.2f}",
                                         extra={"trade": self._position},
                                     )
-                                    self.telegram.alert_trade_open({
-                                        "type": signal["direction"],
-                                        "entry": order["price"],
-                                        "sl": signal["sl"],
-                                        "tp": signal["tp"],
-                                        "lot_size": lot_size,
-                                    })
+                                    self.telegram.alert_trade_open(self._position)
                                 except MT5ConnectorError as e:
                                     logger.error(f"Order failed: {e}")
                                     self.telegram.alert_error(f"Order failed: {e}")

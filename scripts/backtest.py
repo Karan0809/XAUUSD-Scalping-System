@@ -215,78 +215,80 @@ def main():
 
         if position:
             bar = df.iloc[i]
-            sl_dist = abs(position["entry"] - position["original_sl"])
-            tp1_level = position["entry"] + sl_dist if position["type"] == "buy" else position["entry"] - sl_dist
-            tp2_level = position["entry"] + 2 * sl_dist if position["type"] == "buy" else position["entry"] - 2 * sl_dist
+            sl_dist = position["sl_dist"]
+            entry = position["entry"]
+            is_buy = position["type"] == "buy"
+            tp1_level = entry + sl_dist if is_buy else entry - sl_dist
+            tp2_level = entry + 2 * sl_dist if is_buy else entry - 2 * sl_dist
+            tp3_level = entry + 3 * sl_dist if is_buy else entry - 3 * sl_dist
 
-            exit_triggered = False
-            exit_price = None
-            exit_reason = None
-
-            if not position.get("tp1_hit", False):
-                if (position["type"] == "buy" and bar["high"] >= tp1_level) or \
-                   (position["type"] == "sell" and bar["low"] <= tp1_level):
-                    position["sl"] = position["entry"]
-                    position["tp1_hit"] = True
-                    logger.info(f"TP1 {date_str}: SL moved to entry (BE)")
-
-            if not exit_triggered and position.get("tp1_hit", False):
-                if (position["type"] == "buy" and bar["high"] >= tp2_level) or \
-                   (position["type"] == "sell" and bar["low"] <= tp2_level):
-                    exit_price = position["entry"] + 2 * sl_dist if position["type"] == "buy" else position["entry"] - 2 * sl_dist
-                    exit_reason = "tp2"
-                    exit_triggered = True
-
-            if not exit_triggered:
-                if position["type"] == "buy" and bar["low"] <= position["sl"]:
-                    exit_price = position["sl"]
-                    exit_reason = "be" if position.get("tp1_hit", False) else "sl"
-                    exit_triggered = True
-                elif position["type"] == "sell" and bar["high"] >= position["sl"]:
-                    exit_price = position["sl"]
-                    exit_reason = "be" if position.get("tp1_hit", False) else "sl"
-                    exit_triggered = True
-
-            if exit_triggered:
-                price_diff = exit_price - position["entry"]
-                if position["type"] == "sell":
-                    price_diff = -price_diff
-
-                raw_profit = price_diff * position["lot_size"] * 100
-                commission = settings.backtest_commission * position["lot_size"]
-                profit = raw_profit - commission
-
-                balance += profit
-
-                trade_record = {
-                    "type": position["type"],
-                    "entry": position["entry"],
-                    "exit": exit_price,
-                    "profit": round(profit, 2),
-                    "commission": round(commission, 2),
-                    "lot_size": position["original_lot_size"],
+            def book(lots, price, reason):
+                nonlocal balance
+                pdiff = price - entry
+                if not is_buy:
+                    pdiff = -pdiff
+                raw = pdiff * lots * 100
+                comm = settings.backtest_commission * lots
+                net = raw - comm
+                balance += net
+                result.total_commission += comm
+                position["pnl"] = round(position["pnl"] + net, 2)
+                result.trades.append({
+                    "type": position["type"], "entry": entry,
+                    "exit": price, "profit": round(net, 2),
+                    "commission": round(comm, 2), "lot_size": lots,
                     "bars_held": i - position["entry_bar"],
-                    "exit_reason": exit_reason,
+                    "exit_reason": reason, "partial": True,
                     "entry_time": position["entry_time"],
-                    "exit_time": current_time,
-                    "date": date_str,
-                    "tp1_hit": position.get("tp1_hit", False),
-                    "sl_dist": round(sl_dist, 2),
-                }
-                result.trades.append(trade_record)
-                result.total_trades += 1
-                result.total_commission += commission
+                    "exit_time": current_time, "date": date_str,
+                })
+                logger.info(f"{reason.upper()} {date_str}: {lots:.2f} lots P={net:.2f}")
 
-                if profit > 0:
+            was_open = position["remaining_cents"] > 0
+
+            # TP1: close 30% at 1:1, move SL on rest to BE
+            if not position["tp1_hit"] and \
+               ((is_buy and bar["high"] >= tp1_level) or (not is_buy and bar["low"] <= tp1_level)):
+                book(position["tp1_cents"] / 100.0, tp1_level, "tp1")
+                position["remaining_cents"] -= position["tp1_cents"]
+                position["sl"] = entry
+                position["tp1_hit"] = True
+
+            # TP2: close 40% at 1:2 (can fire same bar as TP1)
+            if position["tp1_hit"] and not position["tp2_hit"] and position["remaining_cents"] > 0 and \
+               ((is_buy and bar["high"] >= tp2_level) or (not is_buy and bar["low"] <= tp2_level)):
+                lots = min(position["tp2_cents"], position["remaining_cents"]) / 100.0
+                book(lots, tp2_level, "tp2")
+                position["remaining_cents"] -= min(position["tp2_cents"], position["remaining_cents"])
+                position["tp2_hit"] = True
+
+            # TP3: close remaining 30% at 1:3 (can fire same bar as TP1/TP2)
+            if position["tp1_hit"] and position["tp2_hit"] and not position["tp3_hit"] and position["remaining_cents"] > 0 and \
+               ((is_buy and bar["high"] >= tp3_level) or (not is_buy and bar["low"] <= tp3_level)):
+                lots = position["remaining_cents"] / 100.0
+                book(lots, tp3_level, "tp3")
+                position["remaining_cents"] = 0
+                position["tp3_hit"] = True
+
+            # SL/be check on remaining position
+            if position["remaining_cents"] > 0 and \
+               ((is_buy and bar["low"] <= position["sl"]) or (not is_buy and bar["high"] >= position["sl"])):
+                lots = position["remaining_cents"] / 100.0
+                book(lots, position["sl"],
+                     "be" if position["tp1_hit"] else "sl")
+                position["remaining_cents"] = 0
+
+            if was_open and position["remaining_cents"] <= 0:
+                pnl = position["pnl"]
+                result.total_trades += 1
+                if pnl > 0:
                     result.winning_trades += 1
-                    result.avg_win += profit
-                    result.largest_win = max(result.largest_win, profit)
+                    result.avg_win += pnl
+                    result.largest_win = max(result.largest_win, pnl)
                 else:
                     result.losing_trades += 1
-                    result.avg_loss += profit
-                    result.largest_loss = min(result.largest_loss, profit)
-
-                logger.info(f"CLOSE {date_str} {position['type']} @ {exit_price:.2f} P={profit:.2f} ({exit_reason})")
+                    result.avg_loss += pnl
+                    result.largest_loss = min(result.largest_loss, pnl)
                 position = None
 
         elif trades_today < settings.max_daily_trades:
@@ -300,16 +302,27 @@ def main():
                 if lot_size >= 0.01:
                     trades_today += 1
                     sl_dist = abs(entry_price - sl)
+                    cents = round(lot_size * 100)
+                    tp1_c = max(1, int(cents * 0.3))
+                    tp2_c = max(1, int(cents * 0.4))
+                    if tp1_c + tp2_c > cents:
+                        tp2_c = cents - tp1_c
+                    tp3_c = cents - tp1_c - tp2_c
                     position = {
                         "type": signal["direction"],
                         "entry": entry_price,
                         "sl": sl,
-                        "lot_size": lot_size,
-                        "original_lot_size": lot_size,
+                        "remaining_cents": cents,
+                        "tp1_cents": tp1_c,
+                        "tp2_cents": tp2_c,
+                        "tp3_cents": tp3_c,
+                        "pnl": 0.0,
                         "entry_bar": i,
                         "entry_time": current_time,
                         "original_sl": sl,
                         "tp1_hit": False,
+                        "tp2_hit": False,
+                        "tp3_hit": False,
                         "sl_dist": sl_dist,
                     }
                     logger.info(f"ORB [{date_str}] {signal['direction']} @ {entry_price:.2f} SL={sl:.2f} lot={lot_size:.2f} session={current_session} ({signal.get('setup', '')})")

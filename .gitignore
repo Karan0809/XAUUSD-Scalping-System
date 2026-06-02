@@ -1,5 +1,6 @@
 # Python
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -50,3 +51,13 @@ Dockerfile
 # Bot runtime
 bot.pid
 *.pid
+
+# Backtest output
+*_results.json
+*_results_v*.json
+scalper_*.json
+partial_results.json
+trail_results.json
+
+# opencode agents
+AGENTS.md
