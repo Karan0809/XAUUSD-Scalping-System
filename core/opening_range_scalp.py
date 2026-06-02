@@ -189,12 +189,12 @@ class OpeningRangeScalp:
         for idx, row in recent.iterrows():
             if direction == "buy":
                 if zl <= row["low"] <= zh and row["close"] > row["open"]:
-                    fib_retrace = (row["close"] - zl) / max(zh - zl, 0.001)
+                    fib_retrace = (zh - row["close"]) / max(zh - zl, 0.001)
                     if 0.50 <= fib_retrace <= 0.618:
                         return {"entry": row["close"], "sl": row["low"] - 0.03}
             else:
                 if zl <= row["high"] <= zh and row["close"] < row["open"]:
-                    fib_retrace = (zh - row["close"]) / max(zh - zl, 0.001)
+                    fib_retrace = (row["close"] - zl) / max(zh - zl, 0.001)
                     if 0.50 <= fib_retrace <= 0.618:
                         return {"entry": row["close"], "sl": row["high"] + 0.03}
         return None
@@ -425,9 +425,9 @@ class OpeningRangeScalp:
         if swing_high - swing_low < 0.01:
             return True
         if direction == "buy":
-            fib_level = (price - swing_low) / (swing_high - swing_low)
-        else:
             fib_level = (swing_high - price) / (swing_high - swing_low)
+        else:
+            fib_level = (price - swing_low) / (swing_high - swing_low)
         return fib_level <= 0.618
 
     def analyze(

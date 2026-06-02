@@ -4,44 +4,71 @@ Multi-session opening-range breakout scalper for XAUUSD on MetaTrader 5, combini
 
 ## Strategy
 
-### Entry — Opening Range Breakout (ORB)
+### Sessions
 
-Each session (Asia 00:00–09:00 UTC, London 09:00–12:00 UTC, NY 13:30–16:00 UTC) establishes a fresh opening range from its first 15-minute candle. On the 5-minute chart the bot detects breakouts and looks for a pullback entry into a Point of Interest (POI):
+Each trading day is split into three sessions, each with its own fresh opening range:
+
+| Session | UTC Hours | Opening Range |
+|---|---|---|
+| **Asia** | 00:00–09:00 | First 15-min candle at 00:00 |
+| **London** | 09:00–12:00 | First 15-min candle at 09:00 |
+| **New York** | 13:30–16:00 | First 15-min candle at 13:30 |
+
+### Entry Filters
+
+All entries share a common set of confluences before a signal is generated:
 
 | Filter | Description |
 |---|---|
-| **HTF alignment** | EMA50/200 cross, BOS, HH/HL structure on M15 |
-| **Swing break** | Price broke a recent swing high/low |
-| **Institutional zone** | Entry must coincide with a demand/supply zone |
-| **FVG** | Fair Value Gap in the pullback for additional confluence |
-| **Slow momentum** | Pullback shows loss of momentum (small bodies, long wicks) |
-| **Fib discount** | Pullback retraced 50–61.8% (golden retraction zone) |
-| **Reaction confluence** | Price reacted at the POI (wicks / rejection) |
+| **HTF alignment** | EMA 50/200 cross, change of structure (BOS), HH/HL pattern on M15 confirming trend direction |
+| **Swing break** | Price must break a recent swing high/low on the 5-min chart |
+| **Institutional zone** | Entry must coincide with a supply/demand zone from `institutional_zone.py` |
+| **FVG** | A Fair Value Gap must exist in the pullback for additional confluence |
+| **Slow momentum** | Pullback shows loss of momentum (small-bodied candles, long upper/lower wicks) |
+| **Reaction** | Price reacted at the POI with wicks or rejection, confirming the level holds |
+| **Fib discount** | Entry must be in the 0.5–0.618 golden retraction zone of the swing |
 
-A secondary **aggressive FVG** entry fires when price re-enters a FVG that was left after the breakout, without waiting for a full pullback. In ranging markets a **range-reversal** setup looks for liquidity sweeps at the range boundaries.
+#### Fibonacci Convention
+
+Fibonacci is measured from the **origin of the move** (where the retracement pulls back toward):
+
+| Direction | Fib drawn | 0.0 = | 1.0 = | 0.5–0.618 zone = |
+|---|---|---|---|---|
+| **Buy** (uptrend) | Low → High | Swing high | Swing low | Price retraced 50–61.8% back toward the swing low |
+| **Sell** (downtrend) | High → Low | Swing low | Swing high | Price retraced 50–61.8% back toward the swing high |
+
+Standard levels: **1.0, 0.786, 0.618, 0.5, 0.382, 0.236, 0.0**. Only the 0.5–0.618 golden zone is used for entry.
+
+### Entry Types
+
+| Type | Trigger | Condition |
+|---|---|---|
+| **Breakout Pullback** | Price breaks the opening range, then pulls back into a POI | 5-min candle shows bullish/bearish reversal within POI + fib 0.5–0.618 retrace |
+| **Aggressive FVG** | Price re-enters a FVG left after the breakout | No waiting for a pullback — enters immediately on FVG touch with fib discount |
+| **Range Reversal** | Price sweeps the opening range boundary on the 5-min chart | Reversal candle with wick at the sweep point, no fib required |
 
 ### Exit — 30% / 40% / 30% Partial Profit
 
-| Target | Level | Size | Contribution |
+| Target | R:R Level | Position % | R Contribution |
 |---|---|---|---|
-| TP1 | 1:1 | 30% of position | 0.30 R |
-| TP2 | 1:2 | 40% of position | 0.80 R |
-| TP3 | 1:3 | 30% of position | 0.90 R |
-| **Total** | | | **2.0 R** |
+| TP1 | 1:1 | 30% | 0.30 R |
+| TP2 | 1:2 | 40% | 0.80 R |
+| TP3 | 1:3 | 30% | 0.90 R |
+| **Total** | **2.0 R** | **100%** | **2.00 R** |
 
-- SL moves to breakeven after TP1.
-- The remaining position after TP2 is fully closed at TP3 (no runner).
+- SL moves to **breakeven** after TP1 is hit.
+- The remaining position after TP2 is fully closed at TP3 (no trailing runner).
 - If price reverses before hitting a target, the stop-loss closes whatever portion remains.
 
 ### Backtest Results (Sep 2025 – Jun 2026)
 
 ```
 Total Trades:      216
-Win Rate:          90.74%
-Return:            5,065.49% ($1,000 → $51,655)
-Profit Factor:     18.96
-Max Drawdown:      3.17%
-Avg Bars Held:     7.4
+Win Rate:          94.44%
+Return:            6,003.35% ($1,000 → $61,033)
+Profit Factor:     36.35
+Max Drawdown:      1.67%
+Avg Bars Held:     6.5
 ```
 
 ## Project Structure
