@@ -74,7 +74,7 @@ class ScalperBot:
             self.zone_detector.build_historical(df)
             logger.info(f"M15 data refreshed: {len(df)} bars, {len(self.zone_detector.zones)} zones built")
         except Exception as e:
-            logger.warning(f"M15 load failed: {e}")
+            logger.warning(f"M15 load failed: {e}", exc_info=True)
 
     def _check_new_day(self) -> None:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -282,7 +282,7 @@ class ScalperBot:
 
                 if SessionValidator.is_friday_close(now):
                     remaining = (
-                        datetime(now.year, now.month, now.day, 17, 0) - now
+                        datetime(now.year, now.month, now.day, 17, 0, tzinfo=timezone.utc) - now
                     ).total_seconds()
                     if remaining <= 0:
                         logger.info("Friday close, shutting down")

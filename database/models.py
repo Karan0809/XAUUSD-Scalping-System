@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -48,4 +48,4 @@ class SessionMetrics(BaseModel):
     total_pnl: float = 0.0
     win_rate: float = 0.0
     max_drawdown: float = 0.0
-    created_at: datetime = datetime.utcnow()
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

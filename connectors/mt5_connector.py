@@ -1,7 +1,7 @@
 import os
 import time
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Tuple
 
 import MetaTrader5 as mt5
@@ -93,8 +93,8 @@ class MT5Connector:
                 result = fn(*args, **kwargs)
                 if result is not None:
                     return result
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"MT5 call failed: {e}")
             if attempt == 0:
                 logger.warning("MT5 call failed, reconnecting...")
                 self.disconnect()
@@ -122,7 +122,7 @@ class MT5Connector:
             )
 
         df = pd.DataFrame(rates)
-        df["time"] = pd.to_datetime(df["time"], unit="s")
+        df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
         df.set_index("time", inplace=True)
         df.rename(
             columns={
@@ -154,7 +154,7 @@ class MT5Connector:
             )
 
         df = pd.DataFrame(rates)
-        df["time"] = pd.to_datetime(df["time"], unit="s")
+        df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
         df.set_index("time", inplace=True)
         return df[["open", "high", "low", "close", "tick_volume", "spread"]]
 
@@ -323,7 +323,7 @@ class MT5Connector:
                 "swap": pos.swap,
                 "comment": pos.comment,
                 "magic": pos.magic,
-                "time": datetime.fromtimestamp(pos.time),
+                "time": datetime.fromtimestamp(pos.time, tz=timezone.utc),
             })
         return result
 
