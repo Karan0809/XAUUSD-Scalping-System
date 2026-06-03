@@ -21,6 +21,8 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
 def setup_logging() -> None:
     settings = get_settings()
 
+    sys.stdout.reconfigure(line_buffering=True)
+
     log_dir = Path(settings.log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
 
