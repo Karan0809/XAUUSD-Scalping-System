@@ -80,6 +80,17 @@ class TelegramNotifier:
             logger.error(f"Telegram photo send failed: {e}")
             return False
 
+    def _exit_model_name(self, trade: Dict[str, Any]) -> str:
+        tp3 = trade.get("tp3_lots", 0)
+        tp2 = trade.get("tp2_lots", 0)
+        tp1 = trade.get("tp1_lots", 0)
+        if tp3 > 0:
+            return "3-Target 30/40/30"
+        elif tp2 > 0:
+            return "2-Target 50/50"
+        else:
+            return "Single Target"
+
     def alert_signal(self, signal: Dict[str, Any]) -> None:
         direction = signal.get("direction", "").upper()
         entry = signal.get("entry", 0)
@@ -88,15 +99,15 @@ class TelegramNotifier:
         setup = signal.get("setup", "")
         session = signal.get("session", "")
         sl_dist = abs(entry - sl)
+        rr = abs(entry - tp) / sl_dist if sl_dist > 0 else 0
         msg = (
-            f"\U0001f4e1 <b>ORB Scalp Signal</b>\n"
+            f"\U0001f4e1 <b>ORB Scalp SIGNAL</b>\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-            f"<b>{direction}</b> | {session}\n"
-            f"Entry: <code>{entry:.2f}</code>  SL: <code>{sl:.2f}</code>\n"
-            f"TP: <code>{tp:.2f}</code>  |  R:R 1:2\n"
-            f"Risk: {sl_dist:.2f} pts\n"
-            f"Setup: {setup}\n"
-            f"{fmt_et(fmt='%H:%M')}"
+            f"{direction} | {session}\n"
+            f"Entry: <code>{entry:.2f}</code> | SL: <code>{sl:.2f}</code>\n"
+            f"TP: <code>{tp:.2f}</code> | R:R 1:{rr:.1f}\n"
+            f"{sl_dist:.2f} pts | {setup}\n"
+            f"{fmt_et(fmt='%I:%M:%S %p')}"
         )
         self._send(msg)
 
@@ -110,13 +121,26 @@ class TelegramNotifier:
         tp1 = trade.get("tp1_lots", 0)
         tp2 = trade.get("tp2_lots", 0)
         tp3 = trade.get("tp3_lots", 0)
+        comm = round(self.settings.backtest_commission * lot, 2)
+        balance = trade.get("balance", 0)
+        risk_pct = (risk_amt / balance * 100) if balance > 0 else 0
+        model = self._exit_model_name(trade)
+        tp = trade.get("tp", 0)
+        pairs = []
+        if tp3 > 0:
+            pairs = [f"TP1 1:1 {tp1:.2f}", f"TP2 1:2 {tp2:.2f}", f"TP3 1:3 {tp3:.2f}"]
+        elif tp2 > 0:
+            pairs = [f"TP1 1:1 {tp1:.2f}", f"TP2 1:2 {tp2:.2f}"]
+        else:
+            pairs = [f"TP1 1:1 {tp1:.2f}"]
+        targets = " | ".join(pairs)
         msg = (
             f"\U0001f4b0 <b>ORB Scalp  OPEN</b>\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-            f"<b>{direction}</b>  {lot:.2f} lots\n"
-            f"Entry: <code>{entry:.2f}</code>  SL: <code>{sl:.2f}</code>\n"
-            f"Risk: ${risk_amt:.2f}\n"
-            f"TP1 (1:1): {tp1:.2f} lots  |  TP2 (1:2): {tp2:.2f} lots  |  TP3 (1:3): {tp3:.2f} lots\n"
+            f"<b>{direction}</b> | {lot:.2f} lots | {model}\n"
+            f"Entry: <code>{entry:.2f}</code> | SL: <code>{sl:.2f}</code> | TP: <code>{tp:.2f}</code>\n"
+            f"Risk: ${risk_amt:.2f} ({risk_pct:.1f}%) | Comm: ${comm:.2f}\n"
+            f"{targets}\n"
             f"{fmt_et(fmt='%I:%M:%S %p')}"
         )
         self._send(msg)
@@ -129,6 +153,8 @@ class TelegramNotifier:
         tp1_hit = trade.get("tp1_hit", False)
         tp2_hit = trade.get("tp2_hit", False)
         tp3_hit = trade.get("tp3_hit", False)
+        lot = trade.get("original_lot_size", 0)
+        balance = trade.get("balance", 0)
 
         open_time = trade.get("open_time")
         close_time = trade.get("close_time")
@@ -145,20 +171,25 @@ class TelegramNotifier:
         if tp3_hit: hits.append("TP3")
         hits_str = " + ".join(hits) if hits else "\u2014"
 
-        exit_line = f"Exit: <b>{'+' if pnl >= 0 else ''}${pnl:.2f}</b>"
+        exit_line = f"P&L: <b>{'+' if pnl >= 0 else ''}${pnl:.2f}</b>"
         rr_total = sum([0.30 if tp1_hit else 0, 0.80 if tp2_hit else 0, 0.90 if tp3_hit else 0])
         if rr_total > 0:
-            exit_line += f"  |  <b>+{rr_total:.2f}R</b>"
+            exit_line += f" | +{rr_total:.2f}R"
+
+        sl = trade.get("original_sl", 0)
+        tp = trade.get("tp", 0)
+        model = self._exit_model_name(trade)
 
         msg = (
             f"{emoji} <b>ORB Scalp  CLOSE</b>\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-            f"<b>{direction}</b>\n"
+            f"{direction} | {lot:.2f} lots | {model}\n"
+            f"Entry: <code>{entry:.2f}</code> | SL: <code>{sl:.2f}</code> | TP: <code>{tp:.2f}</code>\n"
             f"{exit_line}\n"
-            f"Entry: <code>{entry:.2f}</code>\n"
-            f"Targets: {hits_str}\n"
-            f"Reason: {reason.upper()}\n"
-            f"{duration}  {fmt_et(fmt='%I:%M:%S %p')}"
+            f"Targets hit: {hits_str}\n"
+            f"Duration: {duration}\n"
+            f"Balance: ${balance:.2f}\n"
+            f"{fmt_et(fmt='%I:%M:%S %p')}"
         )
         self._send(msg)
 
@@ -173,10 +204,10 @@ class TelegramNotifier:
 
     def alert_heartbeat(self, status: str) -> None:
         msg = (
-            f"\u2705 <b>ORB Scalp Heartbeat</b>\n"
+            f"\u2705 <b>ORB Scalp  RUNNING</b>\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
             f"{status}\n"
-            f"Time: {fmt_et(fmt='%I:%M %p')}"
+            f"{fmt_et(fmt='%I:%M %p')}"
         )
         self._send(msg)
 
@@ -204,7 +235,7 @@ class TelegramNotifier:
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
             f"Bot is live and connected\n"
             f"Telegram notifications working\n"
-            f"30/40/30 TP model active\n"
+            f"Adaptive TP model active\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
             f"{fmt_et(fmt='%Y-%m-%d %I:%M:%S %p')}"
         )

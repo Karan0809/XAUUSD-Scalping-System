@@ -8,7 +8,7 @@ import argparse
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 
 import pandas as pd
@@ -168,8 +168,8 @@ def main():
     args = parse_args()
     setup_logging()
 
-    start = datetime.strptime(args.start, "%Y-%m-%d")
-    end = datetime.strptime(args.end, "%Y-%m-%d")
+    start = datetime.strptime(args.start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    end = datetime.strptime(args.end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
     settings = get_settings()
     settings.backtest_start = args.start
@@ -303,11 +303,18 @@ def main():
                     trades_today += 1
                     sl_dist = abs(entry_price - sl)
                     cents = round(lot_size * 100)
-                    tp1_c = max(1, int(cents * 0.3))
-                    tp2_c = max(1, int(cents * 0.4))
-                    if tp1_c + tp2_c > cents:
+                    if cents >= 10:
+                        tp1_c = int(cents * 0.3)
+                        tp2_c = int(cents * 0.4)
+                        tp3_c = cents - tp1_c - tp2_c
+                    elif cents >= 4:
+                        tp1_c = int(cents * 0.5)
                         tp2_c = cents - tp1_c
-                    tp3_c = cents - tp1_c - tp2_c
+                        tp3_c = 0
+                    else:
+                        tp1_c = cents
+                        tp2_c = 0
+                        tp3_c = 0
                     position = {
                         "type": signal["direction"],
                         "entry": entry_price,

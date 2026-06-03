@@ -28,9 +28,11 @@ bot.alert_trade_open({
     "sl": 3444.10,
     "tp": 3462.40,
     "lot_size": 0.12,
+    "tp": 3462.40,
     "tp1_lots": 0.04,
     "tp2_lots": 0.05,
     "tp3_lots": 0.03,
+    "balance": 3000.00,
 })
 
 # Dummy trade close (full TP1+TP2+TP3)
@@ -44,6 +46,10 @@ bot.alert_trade_close({
     "tp3_hit": True,
     "open_time": now,
     "close_time": now,
+    "original_lot_size": 0.12,
+    "original_sl": 3444.10,
+    "tp": 3462.40,
+    "balance": 3145.80,
 })
 
 # Dummy trade close (SL only)
@@ -57,6 +63,10 @@ bot.alert_trade_close({
     "tp3_hit": False,
     "open_time": now,
     "close_time": now,
+    "original_lot_size": 0.08,
+    "original_sl": 3463.50,
+    "tp": 3448.50,
+    "balance": 2947.70,
 })
 
 # Dummy daily summary

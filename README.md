@@ -1,6 +1,6 @@
 # XAUUSD ORB Scalper
 
-Multi-session opening-range breakout scalper for XAUUSD on MetaTrader 5, combining ICT / supply & demand confluences with a 30%-40%-30% partial-profit exit model.
+Multi-session opening-range breakout scalper for XAUUSD on MetaTrader 5, combining ICT / supply & demand confluences with an adaptive partial-profit exit model.
 
 ## Strategy
 
@@ -47,14 +47,15 @@ Standard levels: **1.0, 0.786, 0.618, 0.5, 0.382, 0.236, 0.0**. Only the 0.5–0
 | **Aggressive FVG** | Price re-enters a FVG left after the breakout | No waiting for a pullback — enters immediately on FVG touch with fib discount |
 | **Range Reversal** | Price sweeps the opening range boundary on the 5-min chart | Reversal candle with wick at the sweep point, no fib required |
 
-### Exit — 30% / 40% / 30% Partial Profit
+### Exit — Adaptive Partial Profit
 
-| Target | R:R Level | Position % | R Contribution |
+The exit model adapts automatically based on **lot size** (which derives from account balance):
+
+| Account | Lot Size | Model | Targets |
 |---|---|---|---|
-| TP1 | 1:1 | 30% | 0.30 R |
-| TP2 | 1:2 | 40% | 0.80 R |
-| TP3 | 1:3 | 30% | 0.90 R |
-| **Total** | **2.0 R** | **100%** | **2.00 R** |
+| **$100** | 0.01–0.03 | Single Target | 100% at 1:1 |
+| **$200–$500** | 0.04–0.09 | 2-Target 50/50 | 50% at 1:1 → BE → 50% at 1:2 |
+| **$600+** | 0.10+ | 3-Target 30/40/30 | 30% at 1:1 → BE → 40% at 1:2 → 30% at 1:3 |
 
 - SL moves to **breakeven** after TP1 is hit.
 - The remaining position after TP2 is fully closed at TP3 (no trailing runner).
@@ -62,14 +63,18 @@ Standard levels: **1.0, 0.786, 0.618, 0.5, 0.382, 0.236, 0.0**. Only the 0.5–0
 
 ### Backtest Results (Sep 2025 – Jun 2026)
 
-```
-Total Trades:      216
-Win Rate:          94.44%
-Return:            6,003.35% ($1,000 → $61,033)
-Profit Factor:     36.35
-Max Drawdown:      1.67%
-Avg Bars Held:     6.5
-```
+| Metric | $100 Account | $1,000 Account |
+|---|---|---|
+| **Model** | Single Target (1:1) | 3-Target 30/40/30 |
+| **Total Trades** | 200 | 216 |
+| **Win Rate** | 94.50% | 94.50% |
+| **Return** | 9,631% | 5,585% |
+| **Profit Factor** | 37.67 | 36.16 |
+| **Max Drawdown** | 2.03% | 1.85% |
+| **Avg Win** | $47.99 | $278.54 |
+| **Avg Loss** | -$21.25 | -$127.51 |
+| **Largest Win** | $285.09 | $1,640.10 |
+| **Largest Loss** | -$69.22 | -$404.70 |
 
 ## Project Structure
 
@@ -156,8 +161,21 @@ Optional flags:
 
 ## Risk Management
 
-- **Risk per trade:** 1.5% of current balance (configurable)
-- **Max daily trades:** 3 (configurable)
-- **Max daily loss:** $500 hard stop (configurable)
-- **Partial profit locking:** 30% at 1:1 moves SL to breakeven
+- **Risk per trade:** 1.5% of current balance (configurable in `settings.py`)
+- **Max daily trades:** 3 (configurable in `settings.py`)
+- **Partial profit locking:** SL moves to breakeven after TP1 hit
 - **Commission:** $3.50 per lot per side (built into all calculations)
+- **Minimum account:** $100 (smaller accounts use single-target exit)
+
+## Telegram Alerts
+
+The bot sends real-time notifications to configured Telegram chats:
+
+| Alert | Trigger | Info |
+|---|---|---|
+| **Signal** | Entry detected | Direction, session, entry/SL/TP, R:R |
+| **Trade Open** | Order filled | Direction, lots, exit model, entry/SL/TP, risk %, commission |
+| **Trade Close** | Position closed | P&L, R earned, targets hit, duration, balance, exit model |
+| **Heartbeat** | Every 4 hours | Balance, equity, uptime, position status, daily trades |
+| **Daily Summary** | End of day | P&L, win rate, trades, profit factor, max DD |
+| **Error** | On failure | Error message and timestamp |

@@ -29,7 +29,7 @@ trade_logger = get_logger("trade")
 class ScalperBot:
     POLL_INTERVAL_SECONDS = 30
     M15_REFRESH_SECONDS = 300
-    HEARTBEAT_SECONDS = 21600
+    HEARTBEAT_SECONDS = 14400
 
     def __init__(self):
         self.settings = get_settings()
@@ -188,6 +188,8 @@ class ScalperBot:
                 f"CLOSE {trade['type']} {trade['entry']:.2f} {trade['close_time']} {trade['pnl']:.2f}",
                 extra={"trade": trade},
             )
+            acct = self.connector.get_account_info()
+            trade["balance"] = acct.get("balance", 0)
             self.telegram.alert_trade_close(trade)
             self.mongo.save_trade({
                 "trade_id": trade.get("trade_id", ""),
@@ -348,11 +350,18 @@ class ScalperBot:
                                     self._trades_today += 1
                                     trade_id = str(uuid4())
                                     cents = round(lot_size * 100)
-                                    tp1_c = max(1, int(cents * 0.3))
-                                    tp2_c = max(1, int(cents * 0.4))
-                                    if tp1_c + tp2_c > cents:
+                                    if cents >= 10:
+                                        tp1_c = int(cents * 0.3)
+                                        tp2_c = int(cents * 0.4)
+                                        tp3_c = cents - tp1_c - tp2_c
+                                    elif cents >= 4:
+                                        tp1_c = int(cents * 0.5)
                                         tp2_c = cents - tp1_c
-                                    tp3_c = cents - tp1_c - tp2_c
+                                        tp3_c = 0
+                                    else:
+                                        tp1_c = cents
+                                        tp2_c = 0
+                                        tp3_c = 0
                                     self._position = {
                                         "type": signal["direction"],
                                         "entry": order["price"],
@@ -396,6 +405,8 @@ class ScalperBot:
                                         f"{order['price']:.2f} {signal['sl']:.2f} {signal['tp']:.2f}",
                                         extra={"trade": self._position},
                                     )
+                                    acct = self.connector.get_account_info()
+                                    self._position["balance"] = acct.get("balance", 0)
                                     self.telegram.alert_trade_open(self._position)
                                 except MT5ConnectorError as e:
                                     logger.error(f"Order failed: {e}")
@@ -407,8 +418,8 @@ class ScalperBot:
                     pos_status = "Open" if self._position else "None"
                     self.telegram.alert_heartbeat(
                         f"Balance: ${acct['balance']:.2f}\n"
+                        f"Equity: ${eq:.2f}\n"
                         f"Running since: {fmt_et(self._start_time, '%Y-%m-%d %I:%M %p')}\n"
-                        f"Status: \u2705 Online\n"
                         f"Position: {pos_status} | Today: {self._trades_today}/{self.settings.max_daily_trades}"
                     )
 
