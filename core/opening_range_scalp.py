@@ -22,7 +22,10 @@ SESSION_RANGES: dict[str, tuple[int, int]] = {
 
 
 class OpeningRangeScalp:
-    def __init__(self, zone_detector: Optional[InstitutionalZoneDetector] = None):
+    def __init__(
+        self,
+        zone_detector: Optional[InstitutionalZoneDetector] = None,
+    ):
         self._zone_detector = zone_detector
         self._current_date: Optional[str] = None
         self._current_session: Optional[str] = None
@@ -403,6 +406,8 @@ class OpeningRangeScalp:
             if simple_bearish:
                 return True
             return False
+
+
 
     def _check_fib_discount(self, df_5min: pd.DataFrame, price: float, direction: str, poi: Optional[Tuple[float, float]] = None) -> bool:
         if df_5min is None or len(df_5min) < 5:

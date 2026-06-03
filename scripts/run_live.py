@@ -18,6 +18,8 @@ from config.sessions import SessionTimes, SessionValidator
 from log_utils.logger_setup import setup_logging, get_logger
 from core.opening_range_scalp import OpeningRangeScalp
 from core.institutional_zone import InstitutionalZoneDetector
+from core.risk_manager import RiskManager
+from core.news_filter import NewsFilter
 from connectors.mt5_connector import MT5Connector, MT5ConnectorError
 from database.mongo_client import MongoClient
 from telegram.alerts import TelegramNotifier, fmt_et
@@ -36,7 +38,17 @@ class ScalperBot:
         self.session_times = SessionTimes()
         self.connector = MT5Connector()
         self.zone_detector = InstitutionalZoneDetector()
-        self.orb = OpeningRangeScalp(zone_detector=self.zone_detector)
+        self.orb = OpeningRangeScalp(
+            zone_detector=self.zone_detector,
+        )
+        self.risk_mgr = RiskManager(
+            max_daily_loss_pct=self.settings.circuit_breaker_max_daily_loss_pct,
+            max_consecutive_losses=self.settings.circuit_breaker_max_consecutive_losses,
+            max_drawdown_pct=self.settings.circuit_breaker_max_drawdown_pct,
+        )
+        self.news_filter = NewsFilter(
+            blackout_minutes=self.settings.news_blackout_minutes
+        ) if self.settings.news_filter_enabled else None
         self.telegram = TelegramNotifier()
         self.mongo = MongoClient()
         self._running = False
@@ -82,6 +94,8 @@ class ScalperBot:
             self._current_date = today
             self._trades_today = 0
             self.orb.reset()
+            acct = self.connector.get_account_info()
+            self.risk_mgr.start_day(today, acct["balance"])
             logger.info(f"New trading day: {today}")
 
     def _calc_lot_size(self, entry: float, sl: float, balance: float) -> float:
@@ -137,9 +151,8 @@ class ScalperBot:
 
         tp1_level = entry + sl_dist if is_buy else entry - sl_dist
         tp2_level = entry + 2 * sl_dist if is_buy else entry - 2 * sl_dist
-        tp3_level = entry + 3 * sl_dist if is_buy else entry - 3 * sl_dist
 
-        # TP1: close 30% at 1:1, move SL on rest to BE
+        # TP1: close first tranche at 1:1, move SL to BE
         if not self._position.get("tp1_hit", False) and \
            ((is_buy and bar["high"] >= tp1_level) or (not is_buy and bar["low"] <= tp1_level)):
             self._close_partial(self._position["tp1_lots"], tp1_level, "tp1", current_time)
@@ -150,22 +163,51 @@ class ScalperBot:
                     ticket=self._position["ticket"],
                     sl=entry if is_buy else entry,
                 )
+            # Activate trailing for 50-50 model after TP1
+            if self._position["tp3_lots"] == 0 and self._position["tp2_lots"] > 0 and \
+               self._position["remaining_lots"] > 0:
+                trail_dist = sl_dist * self.settings.trail_multiplier
+                if is_buy:
+                    self._position["trail_level"] = bar["high"] - trail_dist
+                else:
+                    self._position["trail_level"] = bar["low"] + trail_dist
+                self._position["trailing_activated"] = True
+                logger.debug(f"Trailing activated (50-50): level={self._position['trail_level']:.2f}")
 
-        # TP2: close 40% at 1:2 (can fire same bar as TP1)
-        if self._position.get("tp1_hit", False) and not self._position.get("tp2_hit", False) and \
+        # TP2: close second tranche at 1:2 (3-target model only)
+        if self._position.get("tp3_lots", 0) > 0 and \
+           self._position.get("tp1_hit", False) and not self._position.get("tp2_hit", False) and \
            self._position["remaining_lots"] > 0 and \
            ((is_buy and bar["high"] >= tp2_level) or (not is_buy and bar["low"] <= tp2_level)):
             lots = min(self._position["tp2_lots"], self._position["remaining_lots"])
             if lots > 0:
                 self._close_partial(lots, tp2_level, "tp2", current_time)
                 self._position["tp2_hit"] = True
+                if self._position["remaining_lots"] > 0:
+                    trail_dist = sl_dist * self.settings.trail_multiplier
+                    if is_buy:
+                        self._position["trail_level"] = bar["high"] - trail_dist
+                    else:
+                        self._position["trail_level"] = bar["low"] + trail_dist
+                    self._position["trailing_activated"] = True
+                    logger.debug(f"Trailing activated (3-target): level={self._position['trail_level']:.2f}")
 
-        # TP3: close remaining 30% at 1:3 (can fire same bar as TP1/TP2)
-        if self._position.get("tp1_hit", False) and self._position.get("tp2_hit", False) and \
-           not self._position.get("tp3_hit", False) and self._position["remaining_lots"] > 0 and \
-           ((is_buy and bar["high"] >= tp3_level) or (not is_buy and bar["low"] <= tp3_level)):
-            self._close_partial(self._position["remaining_lots"], tp3_level, "tp3", current_time)
-            self._position["tp3_hit"] = True
+        # Update trailing stop
+        if self._position.get("trailing_activated") and self._position["remaining_lots"] > 0:
+            trail_dist = sl_dist * self.settings.trail_multiplier
+            if is_buy:
+                new_trail = bar["high"] - trail_dist
+                if new_trail > self._position["trail_level"]:
+                    self._position["trail_level"] = new_trail
+            else:
+                new_trail = bar["low"] + trail_dist
+                if new_trail < self._position["trail_level"]:
+                    self._position["trail_level"] = new_trail
+
+        # Check trailing stop (replaces fixed TP3)
+        if self._position.get("trailing_activated") and self._position["remaining_lots"] > 0 and \
+           ((is_buy and bar["low"] <= self._position["trail_level"]) or (not is_buy and bar["high"] >= self._position["trail_level"])):
+            self._close_partial(self._position["remaining_lots"], self._position["trail_level"], "trail", current_time)
 
         # SL/be check on remaining position
         if self._position["remaining_lots"] > 0 and \
@@ -176,8 +218,9 @@ class ScalperBot:
         if self._position["remaining_lots"] <= 0:
             trade = self._position
             trade["exit"] = trade.get("_last_price", None)
-            trade["exit_reason"] = "tp3" if trade.get("tp3_hit") else \
-                                   ("tp2" if trade.get("tp2_hit") else "sl/be")
+            trade["exit_reason"] = "trail" if trade.get("trailing_activated") else \
+                                   ("tp3" if trade.get("tp3_hit") else \
+                                    ("tp2" if trade.get("tp2_hit") else "sl/be"))
             trade["close_time"] = current_time
 
             logger.info(
@@ -188,6 +231,7 @@ class ScalperBot:
                 f"CLOSE {trade['type']} {trade['entry']:.2f} {trade['close_time']} {trade['pnl']:.2f}",
                 extra={"trade": trade},
             )
+            self.risk_mgr.record_trade(trade["pnl"])
             acct = self.connector.get_account_info()
             trade["balance"] = acct.get("balance", 0)
             self.telegram.alert_trade_close(trade)
@@ -229,6 +273,10 @@ class ScalperBot:
 
         self._load_15min_data()
 
+        if self.news_filter is not None:
+            self.news_filter.fetch_events()
+            logger.info("News filter initialized")
+
         account = self.connector.get_account_info()
         logger.info(f"Account: {account['login']}, Balance: ${account['balance']:.2f}")
 
@@ -237,8 +285,12 @@ class ScalperBot:
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
             f"Symbol: {self.settings.symbol}\n"
             f"Balance: ${account['balance']:.2f}\n"
-            f"Strategy: ORB + S&D Scalper\n"
+            f"Strategy: ORB + Safety Filters\n"
             f"Risk: {self.settings.risk_percent}% | Max/Day: {self.settings.max_daily_trades}\n"
+            f"Filters: Spread={self.settings.max_spread}pips "
+            f"Trail={self.settings.trail_multiplier}x "
+            f"CB={self.settings.circuit_breaker_max_daily_loss_pct}% "
+            f"{'News ' if self.news_filter else ''}\n"
             f"Sessions: NY only (13:00-16:00 UTC)\n"
             f"Time: {fmt_et(fmt='%I:%M %p')}"
         )
@@ -278,17 +330,13 @@ class ScalperBot:
             while self._running:
                 now = datetime.now(timezone.utc)
 
+                if SessionValidator.is_friday_close(now):
+                    logger.info("Friday close, shutting down")
+                    break
+
                 if not self.session_times.is_trading_hours(now):
                     time.sleep(60)
                     continue
-
-                if SessionValidator.is_friday_close(now):
-                    remaining = (
-                        datetime(now.year, now.month, now.day, 17, 0, tzinfo=timezone.utc) - now
-                    ).total_seconds()
-                    if remaining <= 0:
-                        logger.info("Friday close, shutting down")
-                        break
 
                 self._check_new_day()
 
@@ -323,6 +371,30 @@ class ScalperBot:
                 if self._position is None and self._trades_today < self.settings.max_daily_trades:
                     throttled = self._last_signal_time and (current_time - self._last_signal_time).total_seconds() < 180
                     if not throttled:
+                        # News blackout
+                        if self.news_filter is not None:
+                            in_blackout, reason = self.news_filter.is_blackout(now)
+                            if in_blackout:
+                                logger.debug(f"News filter blocked: {reason}")
+                                time.sleep(60)
+                                continue
+
+                        # Circuit breaker
+                        acct = self.connector.get_account_info()
+                        allowed, cb_reason = self.risk_mgr.check_entry_allowed(acct["balance"])
+                        if not allowed:
+                            logger.debug(f"Circuit breaker blocked: {cb_reason}")
+                            time.sleep(60)
+                            continue
+
+                        # Spread check
+                        tick = self.connector.get_tick()
+                        spread_pips = tick["spread"]
+                        if spread_pips > self.settings.max_spread:
+                            logger.debug(f"Spread too high: {spread_pips} > {self.settings.max_spread}")
+                            time.sleep(10)
+                            continue
+
                         window_df = rates.iloc[max(0, i - 200):i + 1]
                         df_15min_window = self._df_15min[self._df_15min.index <= current_time] if self._df_15min is not None else pd.DataFrame()
                         signal = self.orb.analyze(window_df, df_15min_window, current_time)
@@ -378,6 +450,7 @@ class ScalperBot:
                                         "tp1_hit": False,
                                         "tp2_hit": False,
                                         "tp3_hit": False,
+                                        "trailing_activated": False,
                                         "trade_id": trade_id,
                                         "open_time": current_time,
                                         "ticket": order.get("order", 0),
@@ -418,7 +491,7 @@ class ScalperBot:
                     pos_status = "Open" if self._position else "None"
                     self.telegram.alert_heartbeat(
                         f"Balance: ${acct['balance']:.2f}\n"
-                        f"Equity: ${eq:.2f}\n"
+                        f"Equity: ${acct.get('equity', 0):.2f}\n"
                         f"Running since: {fmt_et(self._start_time, '%Y-%m-%d %I:%M %p')}\n"
                         f"Position: {pos_status} | Today: {self._trades_today}/{self.settings.max_daily_trades}"
                     )

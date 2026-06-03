@@ -28,6 +28,18 @@ class ScalperSettings:
     max_daily_trades: int = 3
     max_slippage: int = 10
 
+    max_spread: float = 30.0
+
+    trailing_stop_enabled: bool = True
+    trail_multiplier: float = 0.3
+
+    news_filter_enabled: bool = False
+    news_blackout_minutes: int = 30
+
+    circuit_breaker_max_daily_loss_pct: float = 3.0
+    circuit_breaker_max_consecutive_losses: int = 4
+    circuit_breaker_max_drawdown_pct: float = 15.0
+
     mongo_uri: str = os.getenv("MONGO_URI", "mongodb://localhost:27017")
     mongo_db: str = "xauusd_scalper"
     mongo_trades_collection: str = "trades"

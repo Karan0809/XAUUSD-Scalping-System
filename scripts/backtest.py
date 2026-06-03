@@ -18,6 +18,7 @@ from config.settings import get_settings, ScalperSettings
 from log_utils.logger_setup import setup_logging
 from core.opening_range_scalp import OpeningRangeScalp
 from core.institutional_zone import InstitutionalZoneDetector
+from core.risk_manager import RiskManager
 from connectors.mt5_connector import MT5Connector, MT5ConnectorError
 
 logger = logging.getLogger(__name__)
@@ -44,12 +45,14 @@ class BacktestResult:
     trades: List[Dict[str, Any]] = field(default_factory=list)
     equity_curve: List[float] = field(default_factory=list)
     equity_timestamps: List[datetime] = field(default_factory=list)
+    spread_filtered: int = 0
+    cb_blocked: int = 0
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="ORB Scalper Backtest")
     parser.add_argument("--start", type=str, default="2025-09-01")
-    parser.add_argument("--end", type=str, default="2026-05-30")
+    parser.add_argument("--end", type=str, default="2026-06-03")
     parser.add_argument("--balance", type=float, default=1000.0)
     parser.add_argument("--risk", type=float, default=1.0)
     parser.add_argument("--output", type=str, default="scalper_results.json")
@@ -82,7 +85,7 @@ def load_data(start: datetime, end: datetime) -> pd.DataFrame:
         df = df[~df.index.duplicated(keep="last")]
         df = df[(df.index >= start) & (df.index <= end)]
         logger.info(f"Loaded {len(df)} M5 bars")
-        return df[["open", "high", "low", "close", "tick_volume"]]
+        return df[["open", "high", "low", "close", "tick_volume", "spread"]]
     except Exception as e:
         logger.error(f"Failed to load M5 data: {e}")
         sys.exit(1)
@@ -161,6 +164,7 @@ def print_results(result: BacktestResult):
     print(f"  Largest Loss:      ${result.largest_loss:.2f}")
     print(f"  Avg Bars Held:     {result.avg_bars_held:.1f}")
     print(f"  Total Commission:  ${result.total_commission:.2f}")
+    print(f"  Filters:           Spread={result.spread_filtered} CB={result.cb_blocked}")
     print("=" * 60 + "\n")
 
 
@@ -181,7 +185,14 @@ def main():
     df_15min = load_15min_data(start, end)
 
     zone_detector = InstitutionalZoneDetector()
-    orb = OpeningRangeScalp(zone_detector=zone_detector)
+    orb = OpeningRangeScalp(
+        zone_detector=zone_detector,
+    )
+    risk_mgr = RiskManager(
+        max_daily_loss_pct=settings.circuit_breaker_max_daily_loss_pct,
+        max_consecutive_losses=settings.circuit_breaker_max_consecutive_losses,
+        max_drawdown_pct=settings.circuit_breaker_max_drawdown_pct,
+    )
     result = BacktestResult()
     balance = args.balance
     peak_balance = balance
@@ -190,7 +201,6 @@ def main():
     current_date = None
     last_session: Optional[str] = None
     m15_idx = 0
-    pending_exit: Optional[Dict[str, Any]] = None
 
     for i in range(60, len(df)):
         current_time = df.index[i]
@@ -199,6 +209,7 @@ def main():
         if date_str != current_date:
             current_date = date_str
             trades_today = 0
+            risk_mgr.start_day(date_str, balance)
 
         current_session = get_session(current_time.hour)
         if current_session is not None and current_session != last_session:
@@ -220,7 +231,6 @@ def main():
             is_buy = position["type"] == "buy"
             tp1_level = entry + sl_dist if is_buy else entry - sl_dist
             tp2_level = entry + 2 * sl_dist if is_buy else entry - 2 * sl_dist
-            tp3_level = entry + 3 * sl_dist if is_buy else entry - 3 * sl_dist
 
             def book(lots, price, reason):
                 nonlocal balance
@@ -246,29 +256,56 @@ def main():
 
             was_open = position["remaining_cents"] > 0
 
-            # TP1: close 30% at 1:1, move SL on rest to BE
+            # TP1: close first tranche at 1:1, move SL to BE
             if not position["tp1_hit"] and \
                ((is_buy and bar["high"] >= tp1_level) or (not is_buy and bar["low"] <= tp1_level)):
                 book(position["tp1_cents"] / 100.0, tp1_level, "tp1")
                 position["remaining_cents"] -= position["tp1_cents"]
                 position["sl"] = entry
                 position["tp1_hit"] = True
+                # Activate trailing for 50-50 model after TP1
+                if position["tp3_cents"] == 0 and position["tp2_cents"] > 0:
+                    trail_dist = position["sl_dist"] * settings.trail_multiplier
+                    if is_buy:
+                        position["trail_level"] = bar["high"] - trail_dist
+                    else:
+                        position["trail_level"] = bar["low"] + trail_dist
+                    position["trailing_activated"] = True
 
-            # TP2: close 40% at 1:2 (can fire same bar as TP1)
-            if position["tp1_hit"] and not position["tp2_hit"] and position["remaining_cents"] > 0 and \
+            # TP2: close second tranche at 1:2 (3-target model only)
+            if position["tp3_cents"] > 0 and position["tp1_hit"] and not position["tp2_hit"] and position["remaining_cents"] > 0 and \
                ((is_buy and bar["high"] >= tp2_level) or (not is_buy and bar["low"] <= tp2_level)):
                 lots = min(position["tp2_cents"], position["remaining_cents"]) / 100.0
                 book(lots, tp2_level, "tp2")
                 position["remaining_cents"] -= min(position["tp2_cents"], position["remaining_cents"])
                 position["tp2_hit"] = True
+                # Activate trailing on remaining 30%
+                if position["remaining_cents"] > 0:
+                    trail_dist = position["sl_dist"] * settings.trail_multiplier
+                    if is_buy:
+                        position["trail_level"] = bar["high"] - trail_dist
+                    else:
+                        position["trail_level"] = bar["low"] + trail_dist
+                    position["trailing_activated"] = True
 
-            # TP3: close remaining 30% at 1:3 (can fire same bar as TP1/TP2)
-            if position["tp1_hit"] and position["tp2_hit"] and not position["tp3_hit"] and position["remaining_cents"] > 0 and \
-               ((is_buy and bar["high"] >= tp3_level) or (not is_buy and bar["low"] <= tp3_level)):
+            # Update trailing stop
+            if position.get("trailing_activated") and position["remaining_cents"] > 0:
+                trail_dist = position["sl_dist"] * settings.trail_multiplier
+                if is_buy:
+                    new_trail = bar["high"] - trail_dist
+                    if new_trail > position["trail_level"]:
+                        position["trail_level"] = new_trail
+                else:
+                    new_trail = bar["low"] + trail_dist
+                    if new_trail < position["trail_level"]:
+                        position["trail_level"] = new_trail
+
+            # Check trailing stop (replaces fixed TP3)
+            if position.get("trailing_activated") and position["remaining_cents"] > 0 and \
+               ((is_buy and bar["low"] <= position["trail_level"]) or (not is_buy and bar["high"] >= position["trail_level"])):
                 lots = position["remaining_cents"] / 100.0
-                book(lots, tp3_level, "tp3")
+                book(lots, position["trail_level"], "trail")
                 position["remaining_cents"] = 0
-                position["tp3_hit"] = True
 
             # SL/be check on remaining position
             if position["remaining_cents"] > 0 and \
@@ -289,9 +326,22 @@ def main():
                     result.losing_trades += 1
                     result.avg_loss += pnl
                     result.largest_loss = min(result.largest_loss, pnl)
+                risk_mgr.record_trade(pnl)
                 position = None
 
         elif trades_today < settings.max_daily_trades:
+            # Spread check
+            spread_pips = df["spread"].iloc[i]
+            if spread_pips > settings.max_spread:
+                result.spread_filtered += 1
+                continue
+
+            # Circuit breaker
+            allowed, cb_reason = risk_mgr.check_entry_allowed(balance)
+            if not allowed:
+                result.cb_blocked += 1
+                continue
+
             df_15min_window = df_15min[df_15min.index <= current_time]
             signal = orb.analyze(window_df, df_15min_window, current_time, session=current_session)
             if signal is not None:
@@ -331,8 +381,13 @@ def main():
                         "tp2_hit": False,
                         "tp3_hit": False,
                         "sl_dist": sl_dist,
+                        "trailing_activated": False,
                     }
-                    logger.info(f"ORB [{date_str}] {signal['direction']} @ {entry_price:.2f} SL={sl:.2f} lot={lot_size:.2f} session={current_session} ({signal.get('setup', '')})")
+                    logger.info(
+                        f"ORB [{date_str}] {signal['direction']} @ {entry_price:.2f} "
+                        f"SL={sl:.2f} lot={lot_size:.2f} session={current_session} "
+                        f"({signal.get('setup', '')})"
+                    )
 
         if balance > peak_balance:
             peak_balance = balance

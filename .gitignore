@@ -43,6 +43,17 @@ tmp/
 temp/
 *.tmp
 *.bak
+*.cache/
+
+# Jupyter (if used for analysis)
+.ipynb_checkpoints/
+*.ipynb
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+.coverage.*
 
 # Docker (compose has local paths, don't commit)
 docker-compose.yml
