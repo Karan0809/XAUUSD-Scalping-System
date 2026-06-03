@@ -59,7 +59,7 @@ class ScalperBot:
                 if chunk is None or len(chunk) == 0:
                     break
                 chunk_df = pd.DataFrame(chunk)
-                chunk_df["time"] = pd.to_datetime(chunk_df["time"], unit="s")
+                chunk_df["time"] = pd.to_datetime(chunk_df["time"], unit="s", utc=True)
                 chunk_df.set_index("time", inplace=True)
                 all_chunks.append(chunk_df)
                 current_end = chunk_df.index.min()
