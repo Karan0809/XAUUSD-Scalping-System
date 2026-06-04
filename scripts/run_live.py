@@ -144,7 +144,6 @@ class ScalperBot:
         if self._position is None:
             return False
 
-        bar = df.iloc[i]
         entry = self._position["entry"]
         sl_dist = abs(entry - self._position["original_sl"])
         is_buy = self._position["type"] == "buy"
@@ -152,70 +151,80 @@ class ScalperBot:
         tp1_level = entry + sl_dist if is_buy else entry - sl_dist
         tp2_level = entry + 2 * sl_dist if is_buy else entry - 2 * sl_dist
 
-        # TP1: close first tranche at 1:1, move SL to BE
-        if not self._position.get("tp1_hit", False) and \
-           ((is_buy and bar["high"] >= tp1_level) or (not is_buy and bar["low"] <= tp1_level)):
-            self._close_partial(self._position["tp1_lots"], tp1_level, "tp1", current_time)
-            self._position["sl"] = entry
-            self._position["tp1_hit"] = True
-            if self._position["remaining_lots"] > 0:
-                self.connector.modify_position(
-                    ticket=self._position["ticket"],
-                    sl=entry if is_buy else entry,
-                )
-            # Activate trailing for 50-50 model after TP1
-            if self._position["tp3_lots"] == 0 and self._position["tp2_lots"] > 0 and \
-               self._position["remaining_lots"] > 0:
-                trail_dist = sl_dist * self.settings.trail_multiplier
-                if is_buy:
-                    self._position["trail_level"] = bar["high"] - trail_dist
-                else:
-                    self._position["trail_level"] = bar["low"] + trail_dist
-                self._position["trailing_activated"] = True
-                logger.debug(f"Trailing activated (50-50): level={self._position['trail_level']:.2f}")
+        # Check ALL bars since position open, not just the last bar.
+        # Conditions are guarded by flags (tp1_hit, tp2_hit, remaining_lots)
+        # so re-processing bars is idempotent and safe.
+        open_time = self._position["open_time"]
+        start_idx = max(0, i - 30)
+        for j in range(start_idx, i + 1):
+            if self._position["remaining_lots"] <= 0:
+                break
+            bar = df.iloc[j]
+            if df.index[j] <= open_time:
+                continue
 
-        # TP2: close second tranche at 1:2 (3-target model only)
-        if self._position.get("tp3_lots", 0) > 0 and \
-           self._position.get("tp1_hit", False) and not self._position.get("tp2_hit", False) and \
-           self._position["remaining_lots"] > 0 and \
-           ((is_buy and bar["high"] >= tp2_level) or (not is_buy and bar["low"] <= tp2_level)):
-            lots = min(self._position["tp2_lots"], self._position["remaining_lots"])
-            if lots > 0:
-                self._close_partial(lots, tp2_level, "tp2", current_time)
-                self._position["tp2_hit"] = True
+            # TP1: close first tranche at 1:1, move SL to BE
+            if not self._position.get("tp1_hit", False) and \
+               ((is_buy and bar["high"] >= tp1_level) or (not is_buy and bar["low"] <= tp1_level)):
+                self._close_partial(self._position["tp1_lots"], tp1_level, "tp1", current_time)
+                self._position["sl"] = entry
+                self._position["tp1_hit"] = True
                 if self._position["remaining_lots"] > 0:
+                    self.connector.modify_position(
+                        ticket=self._position["ticket"],
+                        sl=entry,
+                    )
+                # Activate trailing for 50-50 model after TP1
+                if self._position["tp3_lots"] == 0 and self._position["tp2_lots"] > 0 and \
+                   self._position["remaining_lots"] > 0:
                     trail_dist = sl_dist * self.settings.trail_multiplier
                     if is_buy:
                         self._position["trail_level"] = bar["high"] - trail_dist
                     else:
                         self._position["trail_level"] = bar["low"] + trail_dist
                     self._position["trailing_activated"] = True
-                    logger.debug(f"Trailing activated (3-target): level={self._position['trail_level']:.2f}")
 
-        # Update trailing stop
-        if self._position.get("trailing_activated") and self._position["remaining_lots"] > 0:
-            trail_dist = sl_dist * self.settings.trail_multiplier
-            if is_buy:
-                new_trail = bar["high"] - trail_dist
-                if new_trail > self._position["trail_level"]:
-                    self._position["trail_level"] = new_trail
-            else:
-                new_trail = bar["low"] + trail_dist
-                if new_trail < self._position["trail_level"]:
-                    self._position["trail_level"] = new_trail
+            # TP2: close second tranche at 1:2 (3-target model only)
+            if self._position.get("tp3_lots", 0) > 0 and \
+               self._position.get("tp1_hit", False) and not self._position.get("tp2_hit", False) and \
+               self._position["remaining_lots"] > 0 and \
+               ((is_buy and bar["high"] >= tp2_level) or (not is_buy and bar["low"] <= tp2_level)):
+                lots = min(self._position["tp2_lots"], self._position["remaining_lots"])
+                if lots > 0:
+                    self._close_partial(lots, tp2_level, "tp2", current_time)
+                    self._position["tp2_hit"] = True
+                    if self._position["remaining_lots"] > 0:
+                        trail_dist = sl_dist * self.settings.trail_multiplier
+                        if is_buy:
+                            self._position["trail_level"] = bar["high"] - trail_dist
+                        else:
+                            self._position["trail_level"] = bar["low"] + trail_dist
+                        self._position["trailing_activated"] = True
 
-        # Check trailing stop (replaces fixed TP3)
-        if self._position.get("trailing_activated") and self._position["remaining_lots"] > 0 and \
-           ((is_buy and bar["low"] <= self._position["trail_level"]) or (not is_buy and bar["high"] >= self._position["trail_level"])):
-            self._close_partial(self._position["remaining_lots"], self._position["trail_level"], "trail", current_time)
+            # Update trailing stop
+            if self._position.get("trailing_activated") and self._position["remaining_lots"] > 0:
+                trail_dist = sl_dist * self.settings.trail_multiplier
+                if is_buy:
+                    new_trail = bar["high"] - trail_dist
+                    if new_trail > self._position["trail_level"]:
+                        self._position["trail_level"] = new_trail
+                else:
+                    new_trail = bar["low"] + trail_dist
+                    if new_trail < self._position["trail_level"]:
+                        self._position["trail_level"] = new_trail
 
-        # SL/be check on remaining position
-        if self._position["remaining_lots"] > 0 and \
-           ((is_buy and bar["low"] <= self._position["sl"]) or (not is_buy and bar["high"] >= self._position["sl"])):
-            self._close_partial(self._position["remaining_lots"], self._position["sl"],
-                                "be" if self._position.get("tp1_hit") else "sl", current_time)
+            # Check trailing stop
+            if self._position.get("trailing_activated") and self._position["remaining_lots"] > 0 and \
+               ((is_buy and bar["low"] <= self._position["trail_level"]) or (not is_buy and bar["high"] >= self._position["trail_level"])):
+                self._close_partial(self._position["remaining_lots"], self._position["trail_level"], "trail", current_time)
 
-        if self._position["remaining_lots"] <= 0:
+            # SL/be check on remaining position
+            if self._position["remaining_lots"] > 0 and \
+               ((is_buy and bar["low"] <= self._position["sl"]) or (not is_buy and bar["high"] >= self._position["sl"])):
+                self._close_partial(self._position["remaining_lots"], self._position["sl"],
+                                    "be" if self._position.get("tp1_hit") else "sl", current_time)
+
+        if self._position and self._position["remaining_lots"] <= 0:
             trade = self._position
             trade["exit"] = trade.get("_last_price", None)
             trade["exit_reason"] = "trail" if trade.get("trailing_activated") else \
