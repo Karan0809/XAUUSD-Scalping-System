@@ -158,11 +158,15 @@ class MT5Connector:
         df.set_index("time", inplace=True)
         return df[["open", "high", "low", "close", "tick_volume", "spread"]]
 
+    def _point(self, symbol: str = "XAUUSD") -> float:
+        info = mt5.symbol_info(symbol)
+        return info.point if info else 0.01
+
     def get_tick(self, symbol: str = "XAUUSD") -> Dict[str, float]:
         tick = self._call_with_retry(mt5.symbol_info_tick, symbol)
         if tick is None:
             raise MT5ConnectorError(f"Cannot get tick for {symbol}")
-        return {"bid": tick.bid, "ask": tick.ask, "last": tick.last, "spread": tick.spread}
+        return {"bid": tick.bid, "ask": tick.ask, "last": tick.last, "spread": round((tick.ask - tick.bid) / self._point(symbol), 1)}
 
     def get_symbol_info(self, symbol: str = "XAUUSD") -> Dict[str, Any]:
         if not self._connected:
