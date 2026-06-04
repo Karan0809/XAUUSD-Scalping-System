@@ -50,6 +50,15 @@ class SessionTimes:
             sessions.append("ny_trade")
         return sessions
 
+    def get_active_session(self, dt: datetime) -> Optional[str]:
+        if self.is_ny_trade_window(dt):
+            return "ny"
+        if self.is_london_trade_window(dt):
+            return "london"
+        if self.is_asia(dt):
+            return "asia"
+        return None
+
 
 class SessionValidator:
     MAX_ASIA_RANGE_PIPS: float = 10000.0

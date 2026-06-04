@@ -291,7 +291,7 @@ class ScalperBot:
             f"Trail={self.settings.trail_multiplier}x "
             f"CB={self.settings.circuit_breaker_max_daily_loss_pct}% "
             f"{'News ' if self.news_filter else ''}\n"
-            f"Sessions: NY only (13:00-16:00 UTC)\n"
+            f"Sessions: Asia (00-09) London (09-12) NY (13-16) UTC\n"
             f"Time: {fmt_et(fmt='%I:%M %p')}"
         )
 
@@ -340,7 +340,8 @@ class ScalperBot:
 
                 self._check_new_day()
 
-                if not self.session_times.is_ny_trade_window(now):
+                current_session = self.session_times.get_active_session(now)
+                if current_session is None:
                     time.sleep(60)
                     continue
 
@@ -397,7 +398,7 @@ class ScalperBot:
 
                         window_df = rates.iloc[max(0, i - 200):i + 1]
                         df_15min_window = self._df_15min[self._df_15min.index <= current_time] if self._df_15min is not None else pd.DataFrame()
-                        signal = self.orb.analyze(window_df, df_15min_window, current_time)
+                        signal = self.orb.analyze(window_df, df_15min_window, current_time, session=current_session)
 
                         if signal is not None:
                             balance = self.connector.get_account_info()["balance"]

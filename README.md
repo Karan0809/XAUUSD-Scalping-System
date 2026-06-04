@@ -174,7 +174,7 @@ Key settings in `config/settings.py`:
 python scripts/run_live.py
 ```
 
-The bot polls MT5 every 30 seconds during trading hours (Mon–Thu 00:00–17:00 UTC, Fri until 17:00 UTC). It loads M15 data and builds zones every 5 minutes. Active only during the NY session (13:00–16:00 UTC) for signal generation.
+The bot polls MT5 every 30 seconds during trading hours (Mon–Thu 00:00–17:00 UTC, Fri until 17:00 UTC). It loads M15 data and builds zones every 5 minutes. Signal generation runs across all three sessions — Asia (00–09), London (09–12), NY (13–16) UTC — each with its own independent opening range.
 
 ### Backtesting
 
