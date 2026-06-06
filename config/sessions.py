@@ -104,6 +104,13 @@ class SessionValidator:
         return current
 
     @staticmethod
+    def next_monday_utc(dt: datetime) -> datetime:
+        days_ahead = (7 - dt.weekday()) % 7
+        if days_ahead == 0:
+            days_ahead = 7
+        return (dt.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)).replace(tzinfo=timezone.utc)
+
+    @staticmethod
     def is_valid_session_day(dt: datetime) -> bool:
         if SessionValidator.is_sunday(dt):
             return False

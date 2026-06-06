@@ -340,8 +340,22 @@ class ScalperBot:
                 now = datetime.now(timezone.utc)
 
                 if SessionValidator.is_friday_close(now):
-                    logger.info("Friday close, shutting down")
-                    break
+                    secs_until_monday = (
+                        SessionValidator.next_monday_utc(now) - now
+                    ).total_seconds()
+                    logger.info(
+                        f"Friday close — sleeping {secs_until_monday / 3600:.1f}h until Monday"
+                    )
+                    self._position = None
+                    self.mongo.disconnect()
+                    self.connector.disconnect()
+                    time.sleep(secs_until_monday)
+                    self.connector.connect()
+                    self.mongo.connect()
+                    self._load_15min_data()
+                    self._current_date = None
+                    self._m15_last_refresh = 0
+                    continue
 
                 if not self.session_times.is_trading_hours(now):
                     time.sleep(60)
