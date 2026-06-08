@@ -271,8 +271,10 @@ def main():
                     else:
                         position["trail_level"] = bar["low"] + trail_dist
                     position["trailing_activated"] = True
+                    position["trail_activation_bar"] = i
 
             # TP2: close second tranche at 1:2 (3-target model only)
+
             if position["tp3_cents"] > 0 and position["tp1_hit"] and not position["tp2_hit"] and position["remaining_cents"] > 0 and \
                ((is_buy and bar["high"] >= tp2_level) or (not is_buy and bar["low"] <= tp2_level)):
                 lots = min(position["tp2_cents"], position["remaining_cents"]) / 100.0
@@ -287,7 +289,7 @@ def main():
                     else:
                         position["trail_level"] = bar["low"] + trail_dist
                     position["trailing_activated"] = True
-
+                    position["trail_activation_bar"] = i
             # Update trailing stop
             if position.get("trailing_activated") and position["remaining_cents"] > 0:
                 trail_dist = position["sl_dist"] * settings.trail_multiplier
@@ -300,8 +302,9 @@ def main():
                     if new_trail < position["trail_level"]:
                         position["trail_level"] = new_trail
 
-            # Check trailing stop (replaces fixed TP3)
+            # Check trailing stop (replaces fixed TP3) — skip activation bar
             if position.get("trailing_activated") and position["remaining_cents"] > 0 and \
+               i != position.get("trail_activation_bar") and \
                ((is_buy and bar["low"] <= position["trail_level"]) or (not is_buy and bar["high"] >= position["trail_level"])):
                 lots = position["remaining_cents"] / 100.0
                 book(lots, position["trail_level"], "trail")

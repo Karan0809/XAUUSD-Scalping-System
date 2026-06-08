@@ -183,6 +183,7 @@ class ScalperBot:
                     else:
                         self._position["trail_level"] = bar["low"] + trail_dist
                     self._position["trailing_activated"] = True
+                    self._position["trail_activation_bar"] = j
 
             # TP2: close second tranche at 1:2 (3-target model only)
             if self._position.get("tp3_lots", 0) > 0 and \
@@ -200,6 +201,7 @@ class ScalperBot:
                         else:
                             self._position["trail_level"] = bar["low"] + trail_dist
                         self._position["trailing_activated"] = True
+                        self._position["trail_activation_bar"] = j
 
             # Update trailing stop
             if self._position.get("trailing_activated") and self._position["remaining_lots"] > 0:
@@ -213,8 +215,9 @@ class ScalperBot:
                     if new_trail < self._position["trail_level"]:
                         self._position["trail_level"] = new_trail
 
-            # Check trailing stop
+            # Check trailing stop — skip activation bar
             if self._position.get("trailing_activated") and self._position["remaining_lots"] > 0 and \
+               j != self._position.get("trail_activation_bar") and \
                ((is_buy and bar["low"] <= self._position["trail_level"]) or (not is_buy and bar["high"] >= self._position["trail_level"])):
                 self._close_partial(self._position["remaining_lots"], self._position["trail_level"], "trail", current_time)
 
@@ -475,6 +478,7 @@ class ScalperBot:
                                         "tp2_hit": False,
                                         "tp3_hit": False,
                                         "trailing_activated": False,
+                                        "trail_activation_bar": 0,
                                         "trade_id": trade_id,
                                         "open_time": current_time,
                                         "ticket": order.get("order", 0),

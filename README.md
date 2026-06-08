@@ -14,7 +14,7 @@ Each trading day is split into three sessions, each with its own fresh opening r
 | **London** | 09:00–12:00 | First 15-min candle at 09:00 |
 | **New York** | 13:30–16:00 | First 15-min candle at 13:30 |
 
-The bot runs Mon–Thu 00:00–17:00 UTC, Fri until 17:00 UTC (then shuts down). Outside these hours it sleeps.
+The bot runs Mon–Thu 00:00–17:00 UTC, Fri until 17:00 UTC (then disconnects and sleeps until Monday 00:00 UTC).
 
 ### Entry Filters
 
@@ -60,7 +60,7 @@ Once a trade opens, the bot polls **every 30 seconds** and examines **every M5 b
 | **1. TP1** | Bar high/low hits entry + 1× SL distance | Close first tranche, move SL to breakeven |
 | **2. TP2** (3-target only) | After TP1, bar hits entry + 2× SL distance | Close second tranche, activate trailing |
 | **3. Trail update** | Price extends further | Ratchet trail level up (buys) or down (sells) |
-| **4. Trail check** | Bar breaches trail level | Close remaining lots |
+| **4. Trail check** | Bar breaches trail level (skips activation bar) | Close remaining lots |
 | **5. SL/BE** | Bar breaches current SL | Close remaining (as "be" if TP1 was hit, "sl" otherwise) |
 
 ### Exit Model Selection
@@ -93,6 +93,7 @@ The model adapts automatically based on **lot size** (derived from account balan
 - **Trail distance:** `0.3 × original SL distance` (configurable via `trail_multiplier`)
 - **Trail direction:** For buys, trail level = (bar high) − trail distance; for sells, trail level = (bar low) + trail distance
 - The trail level **only moves in the favorable direction** — never backwards
+- **Activation bar skip:** The trailing stop is **not checked on the bar where it was activated**. This prevents the stop from triggering on the same M5 bar's wick, giving the remaining position a full bar to develop before the trail tightens.
 - If price reverses sharply, the SL at breakeven catches the exit before the trail level is hit
 
 ### Why iterate all bars?
@@ -106,28 +107,25 @@ On every poll, the bot re-examines all M5 bars since entry (up to 30 bars back).
 | **Spread filter** | Skips entries when spread exceeds threshold | 30 pips |
 | **Circuit breaker** | Blocks new entries on 3% daily loss, 4 consecutive losses, or 15% drawdown from peak | On |
 | **News filter** | Optional — blocks entry 30 min before/after high-impact USD events (ForexFactory) | Off |
-| **Friday shutdown** | Bot exits cleanly at 17:00 UTC Friday | Auto |
+| **Friday shutdown** | Bot disconnects at 17:00 UTC Friday, sleeps until Monday 00:00 UTC | Auto |
 
 ## Backtest Results (Sep 2025 – Jun 2026)
 
 Backtested on live M5 XAUUSD tick data across all sessions (Asia + London + NY). Commission: $3.50/lot/side. Risk: 1.5% per trade. Max 3 trades/day.
 
-| Metric | $100 Account (Single TP) | $1,000 Account (30/40/30 + Trail) |
-|---|---|---|
-| **Total Trades** | 217 | 216 |
-| **Win Rate** | 94.47% | 94.44% |
-| **Total Profit** | $33,491 | **$411,440** |
-| **Return** | 33,491% | 41,144% |
-| **Profit Factor** | 94.84 | 44.03 |
-| **Max Drawdown** | 1.35% | 1.57% |
-| **Avg Win** | $163 | $2,062 |
-| **Avg Loss** | -$20 | -$776 |
-| **Largest Win** | $1,890 | **$31,087** |
-| **Largest Loss** | -$66 | -$3,344 |
-| **Trades with TP1 hit** | — | ~95% |
-| **Trades with trailing exit** | — | ~40% |
-
-The trailing stop is the key profit driver — it captures extended moves that fixed-target models would miss. The largest $31k win came from a runner that trailed over hundreds of pips.
+| Metric | $100 Account | $1,000 Account |
+|---|---|---|---|
+| **Total Trades** | 217 | 217 |
+| **Win Rate** | 94.47% | 94.47% |
+| **Total Profit** | **$34,625** | **$148,912** |
+| **Return** | 34,625% | 14,891% |
+| **Profit Factor** | 101.31 | 63.96 |
+| **Max Drawdown** | $21.73 (1.35%) | $135.00 (1.10%) |
+| **Avg Win** | $170.49 | $737.34 |
+| **Avg Loss** | -$27.22 | -$186.86 |
+| **Largest Win** | $10,612 | **$10,612** |
+| **Largest Loss** | -$106.50 | -$670.95 |
+| **Avg Bars Held** | 3.9 | 3.7 |
 
 ## Project Structure
 
@@ -220,7 +218,7 @@ The bot:
 5. Places market orders with SL and wide TP
 6. Manages every open position via bar-by-bar iteration (TP1, TP2, trail, SL/BE)
 7. Sends Telegram alerts for open, close, error, and heartbeat
-8. Shuts down cleanly at 17:00 UTC Friday
+8. Disconnects at 17:00 UTC Friday and sleeps until Monday 00:00 UTC (auto-restart)
 
 ### Backtesting
 
@@ -236,7 +234,7 @@ Optional flags:
 - **Risk per trade:** 1.5% of current balance
 - **Max daily trades:** 3
 - **Partial profit locking:** SL moves to breakeven after TP1 hit
-- **Trailing stop:** 0.3× SL distance, activates after TP1 (50-50) or TP2 (3-target)
+- **Trailing stop:** 0.3× SL distance, activates after TP1 (50-50) or TP2 (3-target); skips activation bar to avoid wick noise
 - **Spread filter:** Skips entry if spread > 30 pips
 - **Circuit breaker:** Blocks entry after 3% daily loss / 4 consecutive losses / 15% drawdown
 - **News filter:** (Optional) blocks entry during high-impact USD events (ForexFactory)
@@ -258,6 +256,7 @@ Optional flags:
 
 - **All times in UTC.** MT5 timestamps are Unix epoch → converted with `utc=True`. Session hours are hardcoded as UTC. NewsFilter converts ForexFactory Eastern times → UTC via `zoneinfo`.
 - **Bar-by-bar position management.** On each 30s poll, the bot examines every M5 bar since the position's open time, applying TP1/TP2/trail/SL checks sequentially. Flags prevent re-triggering.
+- **Trail activation bar skip.** The trailing stop check skips the bar where it was just activated, preventing wick noise from stopping out the runner. Trail level is ratcheted on subsequent bars.
 - **Spread computed live** as `(ask − bid) / point` since `tick.spread` is unavailable on some MT5 builds.
 - **Logs are line-buffered** (`reconfigure(line_buffering=True)`) for real-time terminal output.
 - **No external dependencies beyond MT5, pandas, numpy, pymongo, python-dotenv, requests, pydantic, python-json-logger.**
