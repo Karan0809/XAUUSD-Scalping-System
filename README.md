@@ -249,7 +249,7 @@ Optional flags:
 | **Partial** | TP1, TP2, or trail filled | Lots, price, P&L, cumulative P&L |
 | **Trade Open** | Order filled | Direction, lots, exit model, entry/SL/TP, risk %, commission |
 | **Trade Close** | Position fully closed | P&L, exit reason (trail/tp2/sl/be), balance, targets hit |
-| **Heartbeat** | Every 4 hours | Balance, equity, uptime, position status, daily trades count |
+| **Heartbeat** | Every 6 hours | Balance, equity, uptime, position status, daily trades count |
 | **Error** | On failure | Error message and timestamp |
 
 ## Architecture Notes

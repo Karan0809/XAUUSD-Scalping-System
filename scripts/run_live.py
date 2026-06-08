@@ -31,7 +31,7 @@ trade_logger = get_logger("trade")
 class ScalperBot:
     POLL_INTERVAL_SECONDS = 30
     M15_REFRESH_SECONDS = 300
-    HEARTBEAT_SECONDS = 14400
+    HEARTBEAT_SECONDS = 21600
 
     def __init__(self):
         self.settings = get_settings()
