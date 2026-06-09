@@ -19,6 +19,7 @@ from log_utils.logger_setup import setup_logging
 from core.opening_range_scalp import OpeningRangeScalp
 from core.institutional_zone import InstitutionalZoneDetector
 from core.risk_manager import RiskManager
+from core.news_filter import NewsFilter
 from connectors.mt5_connector import MT5Connector, MT5ConnectorError
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ class BacktestResult:
     equity_timestamps: List[datetime] = field(default_factory=list)
     spread_filtered: int = 0
     cb_blocked: int = 0
+    news_filtered: int = 0
 
 
 def parse_args():
@@ -164,7 +166,7 @@ def print_results(result: BacktestResult):
     print(f"  Largest Loss:      ${result.largest_loss:.2f}")
     print(f"  Avg Bars Held:     {result.avg_bars_held:.1f}")
     print(f"  Total Commission:  ${result.total_commission:.2f}")
-    print(f"  Filters:           Spread={result.spread_filtered} CB={result.cb_blocked}")
+    print(f"  Filters:           Spread={result.spread_filtered} CB={result.cb_blocked} News={result.news_filtered}")
     print("=" * 60 + "\n")
 
 
@@ -194,6 +196,13 @@ def main():
         max_drawdown_pct=settings.circuit_breaker_max_drawdown_pct,
     )
     result = BacktestResult()
+
+    news_filter = NewsFilter(
+        blackout_minutes=settings.news_blackout_minutes
+    ) if settings.news_filter_enabled else None
+    if news_filter is not None:
+        news_filter.fetch_events()
+
     balance = args.balance
     peak_balance = balance
     position: Optional[Dict[str, Any]] = None
@@ -344,6 +353,13 @@ def main():
             if not allowed:
                 result.cb_blocked += 1
                 continue
+
+            # News blackout
+            if news_filter is not None:
+                in_blackout, _ = news_filter.is_blackout(current_time)
+                if in_blackout:
+                    result.news_filtered += 1
+                    continue
 
             df_15min_window = df_15min[df_15min.index <= current_time]
             signal = orb.analyze(window_df, df_15min_window, current_time, session=current_session)
