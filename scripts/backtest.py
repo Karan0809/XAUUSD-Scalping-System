@@ -208,7 +208,6 @@ def main():
     position: Optional[Dict[str, Any]] = None
     trades_today = 0
     current_date = None
-    last_session: Optional[str] = None
     m15_idx = 0
 
     for i in range(60, len(df)):
@@ -221,9 +220,6 @@ def main():
             risk_mgr.start_day(date_str, balance)
 
         current_session = get_session(current_time.hour)
-        if current_session is not None and current_session != last_session:
-            orb.reset()
-            last_session = current_session
 
         while m15_idx < len(df_15min) and df_15min.index[m15_idx] <= current_time:
             zone_detector.update(df_15min.iloc[m15_idx])

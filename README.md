@@ -1,6 +1,6 @@
-# XAUUSD ORB Scalper
+# XAUUSD Scalper (ORB + Free Trade)
 
-Multi-session opening-range breakout scalper for XAUUSD on MetaTrader 5, combining ICT / supply & demand confluences with adaptive partial-profit exits and trailing stop. Fully automated — from signal generation to position management to exit.
+Multi-session scalper for XAUUSD on MetaTrader 5 combining ORB breakouts with an all-day free-trade fallback that uses zone/HTF/momentum confluences. One unified bot replaces the need for separate session and aggressive scalpers.
 
 ## Strategy
 
@@ -15,6 +15,20 @@ Each trading day is split into three sessions, each with its own fresh opening r
 | **New York** | 13:30–16:00 | First 15-min candle at 13:30 |
 
 The bot runs Mon–Thu 00:00–17:00 UTC, Fri until 17:00 UTC (then disconnects and sleeps until Monday 00:00 UTC).
+
+### Free Trade Fallback
+
+When no ORB range is available (outside session hours, or before the opening candle closes), the bot falls back to a **free trade** mode that uses the same quality filters without the range requirement:
+
+| Filter | Source |
+|---|---|
+| **Direction** | HTF alignment (EMA50/200, BOS, HH/HL on M15) |
+| **Confirmation** | Swing break on M5 |
+| **Entry zone** | Institutional zone as POI for pullback |
+| **Entry method** | Pullback into zone or FVG anywhere |
+| **Validation** | Slow momentum, fib 0.5–0.618 discount, M5 reaction |
+
+Both ORB and free trade share the same 20-pip maximum SL, same partial-profit exit model (30/40/30 + trailing), and same daily trade limit.
 
 ### Entry Filters
 
@@ -44,10 +58,17 @@ Standard levels: **1.0, 0.786, 0.618, 0.5, 0.382, 0.236, 0.0**. Only the 0.5–0
 ### Entry Types
 
 | Type | Trigger | Condition |
-|---|---|---|
+|---|---|---|---|
 | **Breakout Pullback** | Price breaks the opening range, then pulls back into a POI | 5-min candle shows bullish/bearish reversal within POI + fib 0.5–0.618 retrace |
 | **Aggressive FVG** | Price re-enters a FVG left after the breakout | No waiting for a pullback — enters immediately on FVG touch with fib discount |
 | **Range Reversal** | Price sweeps the opening range boundary on the 5-min chart | Reversal candle with wick at the sweep point, no fib required |
+
+### Free Trade Entry Types
+
+| Type | Trigger | Condition |
+|---|---|---|
+| **Free Pullback** | Price pulls back into an institutional zone | 5-min candle reversal within zone + fib 0.5–0.618 + slow momentum + reaction |
+| **Free FVG** | FVG forms in the direction of the HTF trend | Entry at FVG midpoint, 20-pip fixed SL, no zone proximity required |
 
 ## Position Management Lifecycle
 
@@ -113,45 +134,32 @@ On every poll, the bot re-examines all M5 bars since entry (up to 30 bars back).
 
 Backtested on live M5 XAUUSD tick data across all sessions (Asia + London + NY). Commission: $3.50/lot/side.
 
-### ORB Scalper (Risk: 2.0%, Max 5 trades/day, Sessions only)
+### Combined Bot (Risk: 2.0%, SL: 20-pips max, Max 15 trades/day, ORB + Free Trade)
 
-| Metric | $100 Account | $1,000 Account |
-|---|---|---|
-| **Total Trades** | 225 | 225 |
-| **Win Rate** | 93.78% | 93.78% |
-| **Total Profit** | **$559,659** | **$790,440** |
-| **Return** | 559,659% | 79,044% |
-| **Profit Factor** | 33.85 | 34.77 |
-| **Max Drawdown** | $61.14 (2.10%) | $55.13 (2.08%) |
-| **Avg Win** | $2,731 | $3,854 |
-| **Avg Loss** | -$1,186 | -$1,628 |
-| **Largest Win** | $31,769 | $31,769 |
-| **Largest Loss** | -$5,325 | -$5,325 |
-| **Avg Bars Held** | 6.2 | 6.2 |
-
-### Aggressive M1 Scalper (Risk: 1.2%, SL: 20 pips, 50/50 + Trail, 24/5)
-
-Strategy: Scan every M1 bar for institutional zone proximity + momentum confirmation. Enter with 20-pip SL, close 50% at TP1 (1:1), move SL to breakeven, trail the remaining 50% with a 6-pip stop (0.3× SL distance).
+Strategy: Full ORB pipeline during sessions (breakout pullback, aggressive FVG, range reversal). Falls through to free trade mode (HTF direction + swing break + zone POI + FVG/pullback entry + full validation) at any time. All SLs capped at 20 pips. Same 30/40/30 + trailing exit model.
 
 | Metric | $1,000 Account |
 |---|---|
-| **Total Trades** | 1,457 |
-| **Win Rate** | 78.38% |
-| **Total Profit** | **$1,333,642** |
-| **Return** | 133,364% |
-| **Profit Factor** | 19.37 |
-| **Max Drawdown** | $27.96 (2.80%) |
-| **Avg Win** | $1,231 |
-| **Avg Loss** | -$230 |
-| **Avg Bars Held** | 1.4 |
-| **Avg Trades/Day** | ~5.8 |
+| **Total Trades** | 2,005 |
+| **Win Rate** | 98.00% |
+| **Total Profit** | **$11,350,043** |
+| **Return** | 1,135,004% |
+| **Profit Factor** | 38.03 |
+| **Max Drawdown** | $95,360 (1.09%) |
+| **Avg Win** | $5,930 |
+| **Avg Loss** | -$7,578 |
+| **Largest Win** | $116,727 |
+| **Largest Loss** | -$95,360 |
+| **Avg Bars Held** | 2.3 |
+| **CB Blocked** | 0 bars (no single day hit the 3% loss limit) |
 
 ### Comparison
 
-| Bot | Trades | WR | Profit ($1k) | DD | PF | Style |
-|-----|--------|-----|-------------|------|------|-------|
-| **ORB Scalper** | 225 | 93.78% | **$790,440** | 2.08% | 34.77 | High-quality, sessions only |
-| **Aggressive M1** | 1,457 | 78.38% | **$1,333,642** | 2.80% | 19.37 | High-volume, all-day |
+| Bot | Trades | WR | Profit ($1k) | DD | PF | CB |
+|-----|--------|-----|-------------|------|------|------|
+| **ORB Scalper** (sessions only) | 225 | 93.78% | $790,440 | 2.08% | 34.77 | — |
+| **Aggressive M1** (zone+momentum) | 1,457 | 78.38% | $1,333,642 | 2.80% | 19.37 | 32,629 |
+| **Combined ORB + Free Trade** | **2,005** | **98.00%** | **$11,350,043** | **1.09%** | **38.03** | **0** |
 
 ## Project Structure
 
@@ -171,10 +179,8 @@ Strategy: Scan every M1 bar for institutional zone proximity + momentum confirma
 ├── log_utils/
 │   └── logger_setup.py          # Structured JSON logging (console + file)
 ├── scripts/
-│   ├── backtest.py              # Historical backtester (ORB strategy)
-│   ├── run_live.py              # Live trading bot (ORB strategy)
-│   ├── backtest_aggressive.py   # Historical backtester (M1 aggressive scalper)
-│   └── run_aggressive.py        # Live M1 aggressive scalper bot
+│   ├── backtest.py              # Historical backtester (ORB + Free Trade)
+│   └── run_live.py              # Live trading bot (single combined strategy)
 ├── telegram/
 │   └── alerts.py                # Telegram notifications (open/close/error/heartbeat)
 ├── .env                         # MT5 credentials, MongoDB URI, Telegram tokens
@@ -219,7 +225,7 @@ Fill in `.env` with your credentials:
 | Setting | Default | Description |
 |---|---|---|
 | `risk_percent` | 2.0 | Risk per trade (% of balance) |
-| `max_daily_trades` | 5 | Max trades per day |
+| `max_daily_trades` | 15 | Max trades per day |
 | `max_spread` | 30.0 | Max spread in pips before skipping entry |
 | `trail_multiplier` | 0.3 | Trailing stop distance = multiplier × SL distance |
 | `trailing_stop_enabled` | True | Master toggle for trailing stop logic |
@@ -242,13 +248,14 @@ The bot:
 1. Connects to MT5, MongoDB, Telegram on startup
 2. Loads 90 days of M15 data and builds institutional zones
 3. Polls for new M5 bars every **30 seconds** during trading hours
-4. Scans all sessions (Asia → London → NY) for ORB signals
-5. Places market orders with SL and wide TP
-6. Manages every open position via bar-by-bar iteration (TP1, TP2, trail, SL/BE)
-7. Sends Telegram alerts for open, close, error, and heartbeat
-8. Disconnects at 17:00 UTC Friday and sleeps until Monday 00:00 UTC (auto-restart)
+4. **ORB mode:** Scans all sessions (Asia → London → NY) for breakout/pullback/reversal signals
+5. **Free trade mode:** Falls through to HTF + zone + FVG signals when no ORB range is active
+6. Places market orders with SL and wide TP
+7. Manages every open position via bar-by-bar iteration (TP1, TP2, trail, SL/BE)
+8. Sends Telegram alerts for open, close, error, and heartbeat
+9. Disconnects at 17:00 UTC Friday and sleeps until Monday 00:00 UTC (auto-restart)
 
-### Backtesting (ORB)
+### Backtesting
 
 ```bash
 python scripts/backtest.py --start 2025-09-01 --end 2026-06-03 --balance 1000 --risk 2.0
@@ -257,37 +264,11 @@ python scripts/backtest.py --start 2025-09-01 --end 2026-06-03 --balance 1000 --
 Optional flags:
 - `--output <file>` — save results as JSON (default: `scalper_results.json`)
 
-### Live Trading (Aggressive M1)
-
-```bash
-python scripts/run_aggressive.py
-```
-
-The aggressive bot:
-1. Connects to MT5, MongoDB, Telegram on startup
-2. Loads 90 days of M15 data and builds institutional zones
-3. Scans every M1 bar for zone proximity + momentum confirmation
-4. Places market orders with 20-pip SL and 1:1 TP (wide TP acts as a safety net)
-5. Closes 50% at TP1 (1:1), moves SL to breakeven, activates trailing on the remaining 50% with a 6-pip trail
-6. Runs 24/5 from Monday 00:00 to Friday 17:00 UTC
-7. Sends Telegram alerts for open, close, error, and heartbeat
-
-### Backtesting (Aggressive M1)
-
-```bash
-python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-10 --balance 1000
-```
-
-Optional flags:
-- `--risk` — risk percent per trade (default: 1.2)
-- `--sl-pips` — fixed SL in pips (default: 20)
-- `--max-trades` — max trades per day (default: 20)
-- `--output <file>` — save results as JSON
-
 ## Risk Management
 
 - **Risk per trade:** 2.0% of current balance
-- **Max daily trades:** 5
+- **Max daily trades:** 15
+- **Max SL:** 20 pips (free trade mode); ORB mode uses breakout-based SL but benefits from the zone SL fix that always picks the tighter stop
 - **Partial profit locking:** SL moves to breakeven after TP1 hit
 - **Trailing stop:** 0.3× SL distance, activates after TP1 (50-50) or TP2 (3-target); skips activation bar to avoid wick noise
 - **Spread filter:** Skips entry if spread > 30 pips

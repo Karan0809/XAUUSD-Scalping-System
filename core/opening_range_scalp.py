@@ -255,6 +255,22 @@ class OpeningRangeScalp:
                         return fvg_mid
         return None
 
+    def _find_fvg_anywhere(self, df_5min: pd.DataFrame, direction: str) -> Optional[float]:
+        if df_5min is None or len(df_5min) < 4:
+            return None
+        recent = df_5min.tail(12)
+        for i in range(len(recent) - 2):
+            c1 = recent.iloc[i]
+            c2 = recent.iloc[i + 1]
+            c3 = recent.iloc[i + 2]
+            if direction == "buy":
+                if c1["high"] < c3["low"]:
+                    return (c1["high"] + c3["low"]) / 2.0
+            else:
+                if c1["low"] > c3["high"]:
+                    return (c1["low"] + c3["high"]) / 2.0
+        return None
+
     def _check_momentum_breakout(self, df_5min: pd.DataFrame, breakout_idx: int, direction: str) -> bool:
         return False
 
@@ -448,20 +464,12 @@ class OpeningRangeScalp:
             fib_level = (price - swing_low) / (swing_high - swing_low)
         return fib_level <= 0.618
 
-    def analyze(
+    def _run_orb_pipeline(
         self,
         df_5min: pd.DataFrame,
         df_15min: pd.DataFrame,
         current_time: datetime,
-        session: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        if session is not None and session != self._current_session:
-            self.reset()
-            self._current_session = session
-
-        if self._entry_triggered:
-            return None
-
         if not self._establish_opening_range(df_15min, current_time):
             return None
 
@@ -476,7 +484,6 @@ class OpeningRangeScalp:
         if self._market_structure == "ranging":
             reversal = self._check_range_reversal(df_5min)
             if reversal:
-                self._entry_triggered = True
                 entry = reversal["price"]
                 direction = reversal["direction"]
                 if direction == "buy":
@@ -557,20 +564,19 @@ class OpeningRangeScalp:
             else:
                 return None
 
-        max_zone_dist = 0.30  # max 30 pips from entry for zone-based SL
+        max_zone_dist = 0.30
         if best_zone is not None:
             if breakout_dir == "buy":
                 zone_sl = best_zone.zone_low - 0.03
                 zone_dist = abs(entry_price - zone_sl)
                 if zone_dist <= max_zone_dist:
-                    sl = zone_sl if sl is None else min(sl, zone_sl)
+                    sl = zone_sl if sl is None else max(sl, zone_sl)
             else:
                 zone_sl = best_zone.zone_high + 0.03
                 zone_dist = abs(entry_price - zone_sl)
                 if zone_dist <= max_zone_dist:
-                    sl = zone_sl if sl is None else max(sl, zone_sl)
+                    sl = zone_sl if sl is None else min(sl, zone_sl)
 
-        self._entry_triggered = True
         sl_distance = abs(entry_price - sl) if sl else 0.01
         if breakout_dir == "buy":
             tp = entry_price + sl_distance * 10.0
@@ -590,3 +596,126 @@ class OpeningRangeScalp:
             "setup": setup,
             "zone_id": id(best_zone) if best_zone else None,
         }
+
+    def _run_free_trade(
+        self,
+        df_5min: pd.DataFrame,
+        df_15min: pd.DataFrame,
+        current_time: datetime,
+    ) -> Optional[Dict[str, Any]]:
+        if df_5min is None or len(df_5min) < 20 or self._zone_detector is None:
+            return None
+
+        current_price = df_5min["close"].iloc[-1]
+
+        htf_aligned, htf_dir = self._check_htf_alignment(df_15min)
+        if not htf_aligned:
+            return None
+
+        direction = "buy" if htf_dir == "uptrend" else "sell"
+
+        if not self._check_swing_break(df_5min, direction):
+            return None
+
+        zone_dir = "demand" if direction == "buy" else "supply"
+        best_zone = self._zone_detector.get_best_zone(zone_dir, current_price)
+        if best_zone is None:
+            return None
+
+        pullback_poi = (best_zone.zone_low, best_zone.zone_high)
+
+        fvg_entry = self._find_fvg_anywhere(df_5min, direction)
+
+        pullback = self._check_pullback(df_5min, pullback_poi, direction)
+        entry_price = None
+        sl = None
+        setup = None
+
+        max_free_sl = 0.20
+        if pullback is not None:
+            entry_price = pullback["entry"]
+            sl = pullback["sl"]
+            if direction == "buy":
+                sl = max(sl, entry_price - max_free_sl)
+            else:
+                sl = min(sl, entry_price + max_free_sl)
+            if not self._check_slow_momentum(df_5min):
+                return None
+            if not self._check_fib_discount(df_5min, entry_price, direction, pullback_poi):
+                return None
+            if not self._check_reaction(df_5min, direction):
+                return None
+            setup = "free_pullback"
+        elif fvg_entry is not None:
+            entry_price = fvg_entry
+            if direction == "buy":
+                sl = entry_price - max_free_sl
+            else:
+                sl = entry_price + max_free_sl
+            setup = "free_fvg"
+        else:
+            return None
+
+        if direction == "buy":
+            zone_sl = best_zone.zone_low - 0.03
+            zone_dist = abs(entry_price - zone_sl)
+            if zone_dist <= max_free_sl:
+                sl = zone_sl if sl is None else max(sl, zone_sl)
+        else:
+            zone_sl = best_zone.zone_high + 0.03
+            zone_dist = abs(entry_price - zone_sl)
+            if zone_dist <= max_free_sl:
+                sl = zone_sl if sl is None else min(sl, zone_sl)
+
+        sl_distance = abs(entry_price - sl)
+        if sl_distance < 0.01:
+            return None
+        if direction == "buy":
+            tp = entry_price + sl_distance * 10.0
+        else:
+            tp = entry_price - sl_distance * 10.0
+
+        logger.info(
+            f"Free trade {direction.upper()} at {entry_price:.2f} "
+            f"SL={sl:.2f} TP={tp:.2f} ({setup}) zone={best_zone.zone_low:.2f}-{best_zone.zone_high:.2f}"
+        )
+        return {
+            "type": "opening_range_scalp",
+            "direction": direction,
+            "entry": entry_price,
+            "sl": sl,
+            "tp": tp,
+            "setup": setup,
+            "zone_id": id(best_zone),
+        }
+
+    def analyze(
+        self,
+        df_5min: pd.DataFrame,
+        df_15min: pd.DataFrame,
+        current_time: datetime,
+        session: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        date_str = current_time.strftime("%Y-%m-%d")
+        if date_str != self._current_date:
+            self.reset()
+            self._current_date = date_str
+
+        if session is not None and session != self._current_session:
+            self.reset()
+            self._current_session = session
+
+        if self._entry_triggered:
+            return None
+
+        if session is not None:
+            signal = self._run_orb_pipeline(df_5min, df_15min, current_time)
+            if signal is not None:
+                self._entry_triggered = True
+                return signal
+
+        signal = self._run_free_trade(df_5min, df_15min, current_time)
+        if signal is not None:
+            return signal
+
+        return None
