@@ -42,6 +42,16 @@ class OpeningRangeScalp:
         self._breakout_fvg: Optional[Tuple[float, float]] = None
         self._swing_broken: bool = False
 
+    def reset_entry(self) -> None:
+        self._entry_triggered = False
+        self._breakout_dir = None
+        self._poi_high = None
+        self._poi_low = None
+        self._best_zone = None
+        self._htf_aligned = False
+        self._breakout_fvg = None
+        self._swing_broken = False
+
     def reset(self) -> None:
         self._current_date = None
         self._current_session = None
@@ -244,6 +254,9 @@ class OpeningRangeScalp:
                         logger.debug(f"Bearish FVG near range: {fvg_mid:.2f}")
                         return fvg_mid
         return None
+
+    def _check_momentum_breakout(self, df_5min: pd.DataFrame, breakout_idx: int, direction: str) -> bool:
+        return False
 
     def _calculate_ema(self, df: pd.DataFrame, period: int) -> pd.Series:
         return df["close"].ewm(span=period, adjust=False).mean()

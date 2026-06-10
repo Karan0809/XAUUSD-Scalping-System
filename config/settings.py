@@ -24,8 +24,8 @@ class ScalperSettings:
     ny_end_hour: int = 16
     london_close_hour: int = 17
 
-    risk_percent: float = 1.5
-    max_daily_trades: int = 3
+    risk_percent: float = 2.0
+    max_daily_trades: int = 5
     max_slippage: int = 10
 
     max_spread: float = 30.0

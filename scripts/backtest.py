@@ -56,7 +56,7 @@ def parse_args():
     parser.add_argument("--start", type=str, default="2025-09-01")
     parser.add_argument("--end", type=str, default="2026-06-03")
     parser.add_argument("--balance", type=float, default=1000.0)
-    parser.add_argument("--risk", type=float, default=1.0)
+    parser.add_argument("--risk", type=float, default=2.0)
     parser.add_argument("--output", type=str, default="scalper_results.json")
     return parser.parse_args()
 

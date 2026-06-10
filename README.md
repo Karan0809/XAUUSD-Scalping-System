@@ -111,21 +111,21 @@ On every poll, the bot re-examines all M5 bars since entry (up to 30 bars back).
 
 ## Backtest Results (Sep 2025 – Jun 2026)
 
-Backtested on live M5 XAUUSD tick data across all sessions (Asia + London + NY). Commission: $3.50/lot/side. Risk: 1.5% per trade. Max 3 trades/day.
+Backtested on live M5 XAUUSD tick data across all sessions (Asia + London + NY). Commission: $3.50/lot/side. Risk: 2.0% per trade. Max 5 trades/day.
 
 | Metric | $100 Account | $1,000 Account |
-|---|---|---|---|
-| **Total Trades** | 217 | 217 |
-| **Win Rate** | 94.47% | 94.47% |
-| **Total Profit** | **$34,625** | **$148,912** |
-| **Return** | 34,625% | 14,891% |
-| **Profit Factor** | 101.31 | 63.96 |
-| **Max Drawdown** | $21.73 (1.35%) | $135.00 (1.10%) |
-| **Avg Win** | $170.49 | $737.34 |
-| **Avg Loss** | -$27.22 | -$186.86 |
-| **Largest Win** | $10,612 | **$10,612** |
-| **Largest Loss** | -$106.50 | -$670.95 |
-| **Avg Bars Held** | 3.9 | 3.7 |
+|---|---|---|
+| **Total Trades** | 225 | 225 |
+| **Win Rate** | 93.78% | 93.78% |
+| **Total Profit** | **$559,659** | **$790,440** |
+| **Return** | 559,659% | 79,044% |
+| **Profit Factor** | 33.85 | 34.77 |
+| **Max Drawdown** | $61.14 (2.10%) | $55.13 (2.08%) |
+| **Avg Win** | $2,731 | $3,854 |
+| **Avg Loss** | -$1,186 | -$1,628 |
+| **Largest Win** | $31,769 | $31,769 |
+| **Largest Loss** | -$5,325 | -$5,325 |
+| **Avg Bars Held** | 6.2 | 6.2 |
 
 ## Project Structure
 
@@ -190,8 +190,8 @@ Fill in `.env` with your credentials:
 
 | Setting | Default | Description |
 |---|---|---|
-| `risk_percent` | 1.5 | Risk per trade (% of balance) |
-| `max_daily_trades` | 3 | Max trades per day |
+| `risk_percent` | 2.0 | Risk per trade (% of balance) |
+| `max_daily_trades` | 5 | Max trades per day |
 | `max_spread` | 30.0 | Max spread in pips before skipping entry |
 | `trail_multiplier` | 0.3 | Trailing stop distance = multiplier × SL distance |
 | `trailing_stop_enabled` | True | Master toggle for trailing stop logic |
@@ -223,7 +223,7 @@ The bot:
 ### Backtesting
 
 ```bash
-python scripts/backtest.py --start 2025-09-01 --end 2026-06-03 --balance 1000 --risk 1.5
+python scripts/backtest.py --start 2025-09-01 --end 2026-06-03 --balance 1000 --risk 2.0
 ```
 
 Optional flags:
@@ -231,8 +231,8 @@ Optional flags:
 
 ## Risk Management
 
-- **Risk per trade:** 1.5% of current balance
-- **Max daily trades:** 3
+- **Risk per trade:** 2.0% of current balance
+- **Max daily trades:** 5
 - **Partial profit locking:** SL moves to breakeven after TP1 hit
 - **Trailing stop:** 0.3× SL distance, activates after TP1 (50-50) or TP2 (3-target); skips activation bar to avoid wick noise
 - **Spread filter:** Skips entry if spread > 30 pips
