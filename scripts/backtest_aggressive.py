@@ -1,0 +1,403 @@
+#!/usr/bin/env python3
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import argparse
+import json
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Optional, Dict, Any, List
+
+import pandas as pd
+import numpy as np
+
+from config.settings import get_settings
+from log_utils.logger_setup import setup_logging
+from core.institutional_zone import InstitutionalZoneDetector
+from core.risk_manager import RiskManager
+from core.news_filter import NewsFilter
+from connectors.mt5_connector import MT5Connector, MT5ConnectorError
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AggBacktestResult:
+    total_trades: int = 0
+    winning_trades: int = 0
+    losing_trades: int = 0
+    win_rate: float = 0.0
+    total_profit: float = 0.0
+    final_balance: float = 0.0
+    return_pct: float = 0.0
+    profit_factor: float = 0.0
+    max_drawdown: float = 0.0
+    max_drawdown_pct: float = 0.0
+    avg_win: float = 0.0
+    avg_loss: float = 0.0
+    largest_win: float = 0.0
+    largest_loss: float = 0.0
+    avg_bars_held: float = 0.0
+    total_commission: float = 0.0
+    trades: List[Dict[str, Any]] = field(default_factory=list)
+    equity_curve: List[float] = field(default_factory=list)
+    equity_timestamps: List[datetime] = field(default_factory=list)
+    spread_filtered: int = 0
+    cb_blocked: int = 0
+    news_filtered: int = 0
+    zone_filtered: int = 0
+    mom_filtered: int = 0
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Aggressive M1 Scalper Backtest")
+    parser.add_argument("--start", type=str, default="2025-09-01")
+    parser.add_argument("--end", type=str, default="2026-06-10")
+    parser.add_argument("--balance", type=float, default=1000.0)
+    parser.add_argument("--risk", type=float, default=1.2, help="Risk percent per trade")
+    parser.add_argument("--sl-pips", type=float, default=20.0, help="Fixed SL in pips")
+    parser.add_argument("--max-trades", type=int, default=20, help="Max trades per day")
+    parser.add_argument("--output", type=str, default="aggressive_results.json")
+    return parser.parse_args()
+
+
+def load_m1_data(start: datetime, end: datetime) -> pd.DataFrame:
+    connector = MT5Connector()
+    try:
+        connector.connect()
+        import MetaTrader5 as mt5
+        all_chunks = []
+        current_end = end
+        while current_end > start:
+            chunk = mt5.copy_rates_from("XAUUSD", mt5.TIMEFRAME_M1, current_end, 50000)
+            if chunk is None or len(chunk) == 0:
+                break
+            chunk_df = pd.DataFrame(chunk)
+            chunk_df["time"] = pd.to_datetime(chunk_df["time"], unit="s", utc=True)
+            chunk_df.set_index("time", inplace=True)
+            all_chunks.append(chunk_df)
+            current_end = chunk_df.index.min()
+            if len(all_chunks) > 1 and (all_chunks[-1].index.min() == all_chunks[-2].index.min()):
+                break
+        connector.disconnect()
+        if not all_chunks:
+            raise MT5ConnectorError("No M1 data")
+        df = pd.concat(all_chunks).sort_index()
+        df = df[~df.index.duplicated(keep="last")]
+        df = df[(df.index >= start) & (df.index <= end)]
+        logger.info(f"Loaded {len(df)} M1 bars")
+        return df[["open", "high", "low", "close", "tick_volume", "spread"]]
+    except Exception as e:
+        logger.error(f"Failed to load M1 data: {e}")
+        sys.exit(1)
+
+
+def load_15min_data(start: datetime, end: datetime) -> pd.DataFrame:
+    connector = MT5Connector()
+    try:
+        connector.connect()
+        import MetaTrader5 as mt5
+        all_chunks = []
+        current_end = end
+        while current_end > start:
+            chunk = mt5.copy_rates_from("XAUUSD", mt5.TIMEFRAME_M15, current_end, 50000)
+            if chunk is None or len(chunk) == 0:
+                break
+            chunk_df = pd.DataFrame(chunk)
+            chunk_df["time"] = pd.to_datetime(chunk_df["time"], unit="s", utc=True)
+            chunk_df.set_index("time", inplace=True)
+            all_chunks.append(chunk_df)
+            current_end = chunk_df.index.min()
+            if len(all_chunks) > 1 and (all_chunks[-1].index.min() == all_chunks[-2].index.min()):
+                break
+        connector.disconnect()
+        if not all_chunks:
+            raise MT5ConnectorError("No M15 data")
+        df = pd.concat(all_chunks).sort_index()
+        df = df[~df.index.duplicated(keep="last")]
+        df = df[(df.index >= start) & (df.index <= end)]
+        logger.info(f"Loaded {len(df)} M15 bars")
+        return df[["open", "high", "low", "close", "tick_volume"]]
+    except Exception as e:
+        logger.error(f"Failed to load M15 data: {e}")
+        sys.exit(1)
+
+
+def calc_lot_size(balance: float, risk_pct: float, sl_pips: float) -> float:
+    sl_price = sl_pips / 100.0
+    risk_amount = balance * (risk_pct / 100.0)
+    return max(0.01, min(round(risk_amount / (sl_price * 100), 2), 10.0))
+
+
+def check_momentum(bars: pd.DataFrame, direction: str) -> bool:
+    if len(bars) < 3:
+        return False
+    last = bars.iloc[-1]
+    prev = bars.iloc[-2]
+    if direction == "buy":
+        return last["close"] > last["open"] and last["close"] > prev["close"]
+    else:
+        return last["close"] < last["open"] and last["close"] < prev["close"]
+
+
+def print_results(result: AggBacktestResult, label: str = "AGGRESSIVE M1 SCALPER"):
+    print("\n" + "=" * 60)
+    print(f"  {label}")
+    print("=" * 60)
+    print(f"  Total Trades:      {result.total_trades}")
+    print(f"  Winning Trades:    {result.winning_trades}")
+    print(f"  Losing Trades:     {result.losing_trades}")
+    print(f"  Win Rate:          {result.win_rate:.2f}%")
+    print(f"  Total Profit:      ${result.total_profit:.2f}")
+    print(f"  Final Balance:     ${result.final_balance:.2f}")
+    print(f"  Return:            {result.return_pct:.2f}%")
+    print(f"  Profit Factor:     {result.profit_factor:.2f}")
+    print(f"  Max Drawdown:      ${result.max_drawdown:.2f} ({result.max_drawdown_pct:.2f}%)")
+    print(f"  Avg Win:           ${result.avg_win:.2f}")
+    print(f"  Avg Loss:          ${result.avg_loss:.2f}")
+    print(f"  Largest Win:       ${result.largest_win:.2f}")
+    print(f"  Largest Loss:      ${result.largest_loss:.2f}")
+    print(f"  Avg Bars Held:     {result.avg_bars_held:.1f}")
+    print(f"  Total Commission:  ${result.total_commission:.2f}")
+    print(f"  Filters:           Zone={result.zone_filtered} Mom={result.mom_filtered} Spread={result.spread_filtered} CB={result.cb_blocked} News={result.news_filtered}")
+    print("=" * 60 + "\n")
+
+
+def main():
+    args = parse_args()
+    setup_logging()
+
+    start = datetime.strptime(args.start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    end = datetime.strptime(args.end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+    settings = get_settings()
+
+    sl_pips = args.sl_pips
+    sl_price = sl_pips / 100.0
+    risk_pct = args.risk
+    max_trades_per_day = args.max_trades
+
+    df = load_m1_data(start, end)
+    df_15min = load_15min_data(start, end)
+
+    zone_detector = InstitutionalZoneDetector()
+    zone_detector.build_historical(df_15min)
+
+    risk_mgr = RiskManager(
+        max_daily_loss_pct=settings.circuit_breaker_max_daily_loss_pct,
+        max_consecutive_losses=settings.circuit_breaker_max_consecutive_losses,
+        max_drawdown_pct=settings.circuit_breaker_max_drawdown_pct,
+    )
+
+    news_filter = NewsFilter(
+        blackout_minutes=settings.news_blackout_minutes
+    ) if settings.news_filter_enabled else None
+    if news_filter is not None:
+        news_filter.fetch_events()
+
+    result = AggBacktestResult()
+    balance = args.balance
+    peak_balance = balance
+    position: Optional[Dict[str, Any]] = None
+    trades_today = 0
+    current_date = None
+    m15_idx = 0
+
+    for i in range(120, len(df)):
+        current_time = df.index[i]
+        date_str = current_time.strftime("%Y-%m-%d")
+
+        if date_str != current_date:
+            current_date = date_str
+            trades_today = 0
+            risk_mgr.start_day(date_str, balance)
+
+        while m15_idx < len(df_15min) and df_15min.index[m15_idx] <= current_time:
+            zone_detector.update(df_15min.iloc[m15_idx])
+            m15_idx += 1
+
+        zone_detector.update_test_status(df["high"].iloc[i], df["low"].iloc[i])
+
+        if position:
+            bar = df.iloc[i]
+            is_buy = position["type"] == "buy"
+            sl_level = position["sl"]
+            tp_level = position["tp"]
+
+            def book(lots, price, reason):
+                nonlocal balance
+                pdiff = price - position["entry"]
+                if not is_buy:
+                    pdiff = -pdiff
+                raw = pdiff * lots * 100
+                comm = settings.backtest_commission * lots
+                net = raw - comm
+                balance += net
+                result.total_commission += comm
+                position["pnl"] = round(position["pnl"] + net, 2)
+                result.trades.append({
+                    "type": position["type"], "entry": position["entry"],
+                    "exit": price, "profit": round(net, 2),
+                    "commission": round(comm, 2), "lot_size": lots,
+                    "bars_held": i - position["entry_bar"],
+                    "exit_reason": reason,
+                    "entry_time": position["entry_time"],
+                    "exit_time": current_time, "date": date_str,
+                })
+
+            if not position.get("tp_hit") and \
+               ((is_buy and bar["high"] >= tp_level) or (not is_buy and bar["low"] <= tp_level)):
+                lots = position["remaining_cents"] / 100.0
+                book(lots, tp_level, "tp")
+                position["remaining_cents"] = 0
+                position["tp_hit"] = True
+
+            elif position["remaining_cents"] > 0 and \
+                 ((is_buy and bar["low"] <= sl_level) or (not is_buy and bar["high"] >= sl_level)):
+                lots = position["remaining_cents"] / 100.0
+                book(lots, sl_level, "sl")
+                position["remaining_cents"] = 0
+
+            if position["remaining_cents"] <= 0 and not position.get("closed"):
+                position["closed"] = True
+                pnl = position["pnl"]
+                result.total_trades += 1
+                if pnl > 0:
+                    result.winning_trades += 1
+                    result.avg_win += pnl
+                    result.largest_win = max(result.largest_win, pnl)
+                else:
+                    result.losing_trades += 1
+                    result.avg_loss += pnl
+                    result.largest_loss = min(result.largest_loss, pnl)
+                risk_mgr.record_trade(pnl)
+                position = None
+
+        elif trades_today < max_trades_per_day:
+            spread_pips = df["spread"].iloc[i]
+            if spread_pips > settings.max_spread:
+                result.spread_filtered += 1
+                continue
+
+            allowed, cb_reason = risk_mgr.check_entry_allowed(balance)
+            if not allowed:
+                result.cb_blocked += 1
+                continue
+
+            if news_filter is not None:
+                in_blackout, _ = news_filter.is_blackout(current_time)
+                if in_blackout:
+                    result.news_filtered += 1
+                    continue
+
+            bar = df.iloc[i]
+            price = bar["close"]
+
+            # 1. Zone: find closest unbreached zone in the correct direction
+            best_dist = float("inf")
+            direction = None
+            for z in zone_detector.zones:
+                if z.breached:
+                    continue
+                if z.zone_type == "demand" and z.zone_high < price:
+                    d = abs(price - (z.zone_high + z.zone_low) / 2.0)
+                    if d < best_dist:
+                        best_dist = d
+                        direction = "buy"
+                elif z.zone_type == "supply" and z.zone_low > price:
+                    d = abs(price - (z.zone_high + z.zone_low) / 2.0)
+                    if d < best_dist:
+                        best_dist = d
+                        direction = "sell"
+
+            if direction is None:
+                result.zone_filtered += 1
+                continue
+
+            # 2. Momentum: confirm direction on M1
+            m1_window = df.iloc[max(0, i - 6):i + 1]
+            if not check_momentum(m1_window, direction):
+                result.mom_filtered += 1
+                continue
+
+            entry_price = price
+            lot_size = calc_lot_size(balance, risk_pct, sl_pips)
+            if lot_size < 0.01:
+                continue
+
+            trades_today += 1
+            cents = round(lot_size * 100)
+            sl_level = entry_price - sl_price if direction == "buy" else entry_price + sl_price
+            tp_level = entry_price + sl_price if direction == "buy" else entry_price - sl_price
+
+            position = {
+                "type": direction,
+                "entry": entry_price,
+                "sl": sl_level,
+                "tp": tp_level,
+                "remaining_cents": cents,
+                "pnl": 0.0,
+                "entry_bar": i,
+                "entry_time": current_time,
+                "tp_hit": False,
+                "closed": False,
+            }
+
+        if balance > peak_balance:
+            peak_balance = balance
+
+        current_dd = peak_balance - balance
+        current_dd_pct = (current_dd / peak_balance * 100) if peak_balance > 0 else 0
+        if current_dd_pct > result.max_drawdown_pct:
+            result.max_drawdown_pct = current_dd_pct
+            result.max_drawdown = current_dd
+
+        result.equity_curve.append(balance)
+        result.equity_timestamps.append(current_time)
+
+    result.total_profit = round(balance - args.balance, 2)
+    result.final_balance = round(balance, 2)
+    result.return_pct = round((result.total_profit / args.balance) * 100, 2)
+
+    if result.total_trades > 0:
+        result.win_rate = round((result.winning_trades / result.total_trades) * 100, 2)
+        if result.winning_trades > 0:
+            result.avg_win = round(result.avg_win / result.winning_trades, 2)
+        if result.losing_trades > 0:
+            result.avg_loss = round(result.avg_loss / result.losing_trades, 2)
+
+        gross_profit = sum(t["profit"] for t in result.trades if t["profit"] > 0)
+        gross_loss = abs(sum(t["profit"] for t in result.trades if t["profit"] < 0))
+        result.profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else float("inf")
+        result.avg_bars_held = round(np.mean([t["bars_held"] for t in result.trades]), 1)
+
+    print_results(result)
+
+    output = {
+        "total_trades": result.total_trades,
+        "winning_trades": result.winning_trades,
+        "losing_trades": result.losing_trades,
+        "win_rate": result.win_rate,
+        "total_profit": result.total_profit,
+        "final_balance": result.final_balance,
+        "return_pct": result.return_pct,
+        "profit_factor": result.profit_factor,
+        "max_drawdown": result.max_drawdown,
+        "max_drawdown_pct": result.max_drawdown_pct,
+        "avg_win": result.avg_win,
+        "avg_loss": result.avg_loss,
+        "largest_win": result.largest_win,
+        "largest_loss": result.largest_loss,
+        "avg_bars_held": result.avg_bars_held,
+        "total_commission": result.total_commission,
+    }
+
+    with open(args.output, "w") as f:
+        json.dump(output, f, indent=2)
+    logger.info(f"Results saved to {args.output}")
+
+
+if __name__ == "__main__":
+    main()

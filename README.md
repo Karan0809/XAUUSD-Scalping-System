@@ -111,7 +111,9 @@ On every poll, the bot re-examines all M5 bars since entry (up to 30 bars back).
 
 ## Backtest Results (Sep 2025 – Jun 2026)
 
-Backtested on live M5 XAUUSD tick data across all sessions (Asia + London + NY). Commission: $3.50/lot/side. Risk: 2.0% per trade. Max 5 trades/day.
+Backtested on live M5 XAUUSD tick data across all sessions (Asia + London + NY). Commission: $3.50/lot/side.
+
+### ORB Scalper (Risk: 2.0%, Max 5 trades/day, Sessions only)
 
 | Metric | $100 Account | $1,000 Account |
 |---|---|---|
@@ -126,6 +128,30 @@ Backtested on live M5 XAUUSD tick data across all sessions (Asia + London + NY).
 | **Largest Win** | $31,769 | $31,769 |
 | **Largest Loss** | -$5,325 | -$5,325 |
 | **Avg Bars Held** | 6.2 | 6.2 |
+
+### Aggressive M1 Scalper (Risk: 1.2%, SL: 20 pips, 1:1 TP, 24/5)
+
+Strategy: Scan every M1 bar for institutional zone proximity + momentum confirmation. No FVG, no ORB, no HTF alignment — pure zone + momentum on the 1-min chart.
+
+| Metric | $1,000 Account |
+|---|---|
+| **Total Trades** | 1,299 |
+| **Win Rate** | 78.83% |
+| **Total Profit** | **$72,692** |
+| **Return** | 7,269% |
+| **Profit Factor** | 2.34 |
+| **Max Drawdown** | $359 (8.47%) |
+| **Avg Win** | $123.88 |
+| **Avg Loss** | -$196.95 |
+| **Avg Bars Held** | 1.0 (1 M1 bar) |
+| **Avg Trades/Day** | ~5.2 |
+
+### Comparison
+
+| Bot | Trades | WR | Profit ($1k) | DD | PF | Style |
+|-----|--------|-----|-------------|------|------|-------|
+| **ORB Scalper** | 225 | 93.78% | **$790,440** | 2.08% | 34.77 | High-quality, sessions only |
+| **Aggressive M1** | 1,299 | 78.83% | **$72,692** | 8.47% | 2.34 | High-volume, all-day |
 
 ## Project Structure
 
@@ -145,8 +171,10 @@ Backtested on live M5 XAUUSD tick data across all sessions (Asia + London + NY).
 ├── log_utils/
 │   └── logger_setup.py          # Structured JSON logging (console + file)
 ├── scripts/
-│   ├── backtest.py              # Historical backtester with per-fill PnL
-│   └── run_live.py              # Live trading bot (polling loop + position management)
+│   ├── backtest.py              # Historical backtester (ORB strategy)
+│   ├── run_live.py              # Live trading bot (ORB strategy)
+│   ├── backtest_aggressive.py   # Historical backtester (M1 aggressive scalper)
+│   └── run_aggressive.py        # Live M1 aggressive scalper bot
 ├── telegram/
 │   └── alerts.py                # Telegram notifications (open/close/error/heartbeat)
 ├── .env                         # MT5 credentials, MongoDB URI, Telegram tokens
@@ -220,7 +248,7 @@ The bot:
 7. Sends Telegram alerts for open, close, error, and heartbeat
 8. Disconnects at 17:00 UTC Friday and sleeps until Monday 00:00 UTC (auto-restart)
 
-### Backtesting
+### Backtesting (ORB)
 
 ```bash
 python scripts/backtest.py --start 2025-09-01 --end 2026-06-03 --balance 1000 --risk 2.0
@@ -228,6 +256,33 @@ python scripts/backtest.py --start 2025-09-01 --end 2026-06-03 --balance 1000 --
 
 Optional flags:
 - `--output <file>` — save results as JSON (default: `scalper_results.json`)
+
+### Live Trading (Aggressive M1)
+
+```bash
+python scripts/run_aggressive.py
+```
+
+The aggressive bot:
+1. Connects to MT5, MongoDB, Telegram on startup
+2. Loads 90 days of M15 data and builds institutional zones
+3. Scans every M1 bar for zone proximity + momentum confirmation
+4. Places market orders with 20-pip SL and 1:1 TP
+5. Closes at TP or SL — no trailing, no partial exits
+6. Runs 24/5 from Monday 00:00 to Friday 17:00 UTC
+7. Sends Telegram alerts for open, close, error, and heartbeat
+
+### Backtesting (Aggressive M1)
+
+```bash
+python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-10 --balance 1000
+```
+
+Optional flags:
+- `--risk` — risk percent per trade (default: 1.2)
+- `--sl-pips` — fixed SL in pips (default: 20)
+- `--max-trades` — max trades per day (default: 20)
+- `--output <file>` — save results as JSON
 
 ## Risk Management
 
