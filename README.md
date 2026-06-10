@@ -281,12 +281,15 @@ Optional flags:
 
 | Alert | Trigger | Info |
 |---|---|---|
-| **Startup** | Bot initialized | Symbol, balance, strategy, active filters, sessions |
+| **Signal** | Entry condition met | Direction, entry/SL/TP, pip distance, R:R, setup name (ORB Breakout Pullback / ORB Aggressive FVG / ORB Range Reversal / Free Pullback / Free FVG) |
+| **Open** | Order filled | Direction, lot size, exit model, entry/SL/TP, risk %, commission, setup name |
+| **Close** | Position fully closed | P&L with emoji (green/red), exit reason (TP/trail/BE/SL) with icon, R:R earned, targets hit, duration, balance |
 | **Partial** | TP1, TP2, or trail filled | Lots, price, P&L, cumulative P&L |
-| **Trade Open** | Order filled | Direction, lots, exit model, entry/SL/TP, risk %, commission |
-| **Trade Close** | Position fully closed | P&L, exit reason (trail/tp2/sl/be), balance, targets hit |
+| **Daily Summary** | End of day | Trades split by type (ORB vs Free), wins/losses, WR, P&L, PF, DD, balance |
 | **Heartbeat** | Every 6 hours | Balance, equity, uptime, position status, daily trades count |
 | **Error** | On failure | Error message and timestamp |
+
+All trade alerts are tagged `[ORB]` or `[FREE]` so you can distinguish session-based entries from free-trade fallback entries at a glance.
 
 ## Architecture Notes
 

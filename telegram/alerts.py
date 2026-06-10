@@ -91,41 +91,70 @@ class TelegramNotifier:
         else:
             return "Single Target"
 
+    def _setup_label(self, setup: str) -> str:
+        labels = {
+            "breakout_pullback": "ORB Breakout Pullback",
+            "aggressive_fvg": "ORB Aggressive FVG",
+            "range_reversal": "ORB Range Reversal",
+            "free_pullback": "Free Pullback",
+            "free_fvg": "Free FVG",
+        }
+        return labels.get(setup, setup)
+
+    def _is_free_setup(self, setup: str) -> bool:
+        return setup.startswith("free_")
+
+    def _dir_emoji(self, direction: str) -> str:
+        return "\U0001f7e2" if direction == "buy" else "\U0001f534"
+
+    def _dir_arrow(self, direction: str) -> str:
+        return "\U0001f847" if direction == "buy" else "\U0001f841"
+
     def alert_signal(self, signal: Dict[str, Any]) -> None:
-        direction = signal.get("direction", "").upper()
+        direction = signal.get("direction", "")
         entry = signal.get("entry", 0)
         sl = signal.get("sl", 0)
         tp = signal.get("tp", 0)
         setup = signal.get("setup", "")
-        session = signal.get("session", "")
         sl_dist = abs(entry - sl)
         rr = abs(entry - tp) / sl_dist if sl_dist > 0 else 0
+        label = self._setup_label(setup)
+        is_free = self._is_free_setup(setup)
+        tag = "FREE" if is_free else "ORB"
+        session_info = f" | {signal.get('session', '').upper()}" if not is_free else ""
         msg = (
-            f"\U0001f4e1 <b>ORB Scalp SIGNAL</b>\n"
+            f"\U0001f4e1 <b>SIGNAL [{tag}]</b>\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-            f"{direction} | {session}\n"
-            f"Entry: <code>{entry:.2f}</code> | SL: <code>{sl:.2f}</code>\n"
-            f"TP: <code>{tp:.2f}</code> | R:R 1:{rr:.1f}\n"
-            f"{sl_dist:.2f} pts | {setup}\n"
+            f"{self._dir_emoji(direction)} {direction.upper()} {self._dir_arrow(direction)}{session_info}\n"
+            f"Entry: <code>{entry:.2f}</code>\n"
+            f"SL: <code>{sl:.2f}</code> ({sl_dist * 100:.0f} pips)\n"
+            f"TP: <code>{tp:.2f}</code> (1:{rr:.1f})\n"
+            f"{label}\n"
             f"{fmt_et(fmt='%I:%M:%S %p')}"
         )
         self._send(msg)
 
     def alert_trade_open(self, trade: Dict[str, Any]) -> None:
-        direction = trade.get("type", "").upper()
+        direction = trade.get("type", "").lower()
         entry = trade.get("entry", 0)
         sl = trade.get("sl", 0)
         lot = trade.get("lot_size", 0)
         sl_dist = abs(entry - sl)
         risk_amt = sl_dist * lot * 100
-        tp1 = trade.get("tp1_lots", 0)
-        tp2 = trade.get("tp2_lots", 0)
-        tp3 = trade.get("tp3_lots", 0)
         comm = round(self.settings.backtest_commission * lot, 2)
         balance = trade.get("balance", 0)
         risk_pct = (risk_amt / balance * 100) if balance > 0 else 0
         model = self._exit_model_name(trade)
         tp = trade.get("tp", 0)
+        setup = trade.get("setup", "")
+        label = self._setup_label(setup)
+        is_free = self._is_free_setup(setup)
+        tag = "FREE" if is_free else "ORB"
+        session_info = f" | {trade.get('session', '').upper()}" if not is_free else ""
+
+        tp1 = trade.get("tp1_lots", 0)
+        tp2 = trade.get("tp2_lots", 0)
+        tp3 = trade.get("tp3_lots", 0)
         pairs = []
         if tp3 > 0:
             pairs = [f"TP1 1:1 {tp1:.2f}", f"TP2 1:2 {tp2:.2f}", f"TP3 1:3 {tp3:.2f}"]
@@ -135,18 +164,20 @@ class TelegramNotifier:
             pairs = [f"TP1 1:1 {tp1:.2f}"]
         targets = " | ".join(pairs)
         msg = (
-            f"\U0001f4b0 <b>ORB Scalp  OPEN</b>\n"
+            f"\U0001f4b0 <b>OPEN [{tag}]</b>\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-            f"<b>{direction}</b> | {lot:.2f} lots | {model}\n"
-            f"Entry: <code>{entry:.2f}</code> | SL: <code>{sl:.2f}</code> | TP: <code>{tp:.2f}</code>\n"
+            f"{self._dir_emoji(direction)} {direction.upper()} {self._dir_arrow(direction)}{session_info}\n"
+            f"Lot: {lot:.2f} | {model}\n"
+            f"Entry: <code>{entry:.2f}</code> | SL: <code>{sl:.2f}</code>\n"
             f"Risk: ${risk_amt:.2f} ({risk_pct:.1f}%) | Comm: ${comm:.2f}\n"
+            f"{label}\n"
             f"{targets}\n"
             f"{fmt_et(fmt='%I:%M:%S %p')}"
         )
         self._send(msg)
 
     def alert_trade_close(self, trade: Dict[str, Any]) -> None:
-        direction = trade.get("type", "").upper()
+        direction = trade.get("type", "").lower()
         entry = trade.get("entry", 0)
         pnl = trade.get("pnl", 0)
         reason = trade.get("exit_reason", "")
@@ -155,6 +186,11 @@ class TelegramNotifier:
         tp3_hit = trade.get("tp3_hit", False)
         lot = trade.get("original_lot_size", 0)
         balance = trade.get("balance", 0)
+        setup = trade.get("setup", "")
+        label = self._setup_label(setup)
+        is_free = self._is_free_setup(setup)
+        tag = "FREE" if is_free else "ORB"
+        session_info = f" | {trade.get('session', '').upper()}" if not is_free else ""
 
         open_time = trade.get("open_time")
         close_time = trade.get("close_time")
@@ -163,7 +199,7 @@ class TelegramNotifier:
             mins = int((close_time - open_time).total_seconds() / 60)
             duration = f"{mins}m"
 
-        emoji = "\U0001f4b0" if pnl > 0 else "\U0001f534"
+        emoji = "\U0001f7e2" if pnl > 0 else "\U0001f534"
 
         hits = []
         if tp1_hit: hits.append("TP1")
@@ -176,35 +212,34 @@ class TelegramNotifier:
         if rr_total > 0:
             exit_line += f" | +{rr_total:.2f}R"
 
-        sl = trade.get("original_sl", 0)
-        tp = trade.get("tp", 0)
-        model = self._exit_model_name(trade)
+        reason_emoji = {"tp1": "\U0001f3c6", "tp2": "\U0001f3c6", "trail": "\U0001f4c8", "be": "\U0001f504", "sl": "\U0001f6ab"}.get(reason, "\u2753")
 
         msg = (
-            f"{emoji} <b>ORB Scalp  CLOSE</b>\n"
+            f"{emoji} <b>CLOSE [{tag}]</b>\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-            f"{direction} | {lot:.2f} lots | {model}\n"
-            f"Entry: <code>{entry:.2f}</code> | SL: <code>{sl:.2f}</code> | TP: <code>{tp:.2f}</code>\n"
+            f"{self._dir_emoji(direction)} {direction.upper()}{session_info}\n"
+            f"Entry: <code>{entry:.2f}</code> | Lot: {lot:.2f}\n"
             f"{exit_line}\n"
-            f"Targets hit: {hits_str}\n"
+            f"{reason_emoji} {reason.upper()} | {hits_str}\n"
             f"Duration: {duration}\n"
-            f"Balance: ${balance:.2f}\n"
+            f"\U0001f4b5 ${balance:.2f}\n"
+            f"{label}\n"
             f"{fmt_et(fmt='%I:%M:%S %p')}"
         )
         self._send(msg)
 
     def alert_error(self, error_message: str) -> None:
         msg = (
-            f"\u26a0\ufe0f <b>ORB Scalp Error</b>\n"
+            f"\u26a0\ufe0f <b>ERROR</b>\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
             f"{error_message}\n"
-            f"Time: {fmt_et(fmt='%I:%M:%S %p')}"
+            f"{fmt_et(fmt='%I:%M:%S %p')}"
         )
         self._send(msg)
 
     def alert_heartbeat(self, status: str) -> None:
         msg = (
-            f"\u2705 <b>ORB Scalp  RUNNING</b>\n"
+            f"\u2705 <b>RUNNING</b>\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
             f"{status}\n"
             f"{fmt_et(fmt='%I:%M %p')}"
@@ -214,28 +249,30 @@ class TelegramNotifier:
     def alert_daily_summary(self, summary: Dict[str, Any]) -> None:
         pnl = summary.get("total_pnl", 0)
         emoji = "\U0001f44d" if pnl > 0 else "\U0001f44e"
+        orbs = summary.get("orb_trades", 0)
+        frees = summary.get("free_trades", 0)
         msg = (
-            f"{emoji} <b>ORB Scalp Daily Summary</b>\n"
+            f"{emoji} <b>Daily Summary</b>\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
             f"Date: {summary.get('date', 'N/A')}\n"
-            f"Trades: {summary.get('total_trades', 0)}\n"
-            f"Wins: {summary.get('wins', 0)}  |  Losses: {summary.get('losses', 0)}\n"
-            f"Win Rate: {summary.get('win_rate', 0):.1f}%\n"
+            f"Trades: {summary.get('total_trades', 0)} (ORB {orbs} | Free {frees})\n"
+            f"Wins: {summary.get('wins', 0)} | Losses: {summary.get('losses', 0)}\n"
+            f"WR: {summary.get('win_rate', 0):.1f}%\n"
             f"P&L: <b>{'+' if pnl >= 0 else ''}${pnl:.2f}</b>\n"
-            f"Profit Factor: {summary.get('profit_factor', 'N/A')}\n"
-            f"Max DD: {summary.get('max_drawdown', 0):.1f}%\n"
-            f"Balance: ${summary.get('balance', 0):.2f}\n"
+            f"PF: {summary.get('profit_factor', 'N/A')}\n"
+            f"DD: {summary.get('max_drawdown', 0):.1f}%\n"
+            f"\U0001f4b5 ${summary.get('balance', 0):.2f}\n"
             f"{fmt_et(fmt='%Y-%m-%d %I:%M %p')}"
         )
         self._send(msg)
 
     def send_test(self) -> bool:
         msg = (
-            f"\U0001f514 <b>ORB Scalper  TEST ALERT</b>\n"
+            f"\U0001f514 <b>TEST ALERT</b>\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
             f"Bot is live and connected\n"
+            f"ORB + Free Trade combined strategy\n"
             f"Telegram notifications working\n"
-            f"Adaptive TP model active\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
             f"{fmt_et(fmt='%Y-%m-%d %I:%M:%S %p')}"
         )
