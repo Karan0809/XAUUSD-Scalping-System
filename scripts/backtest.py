@@ -272,6 +272,7 @@ def main():
                 position["remaining_cents"] -= position["tp1_cents"]
                 position["sl"] = entry
                 position["tp1_hit"] = True
+                position["tp_hit_bar"] = i
                 # Activate trailing for 50-50 model after TP1
                 if position["tp3_cents"] == 0 and position["tp2_cents"] > 0:
                     trail_dist = position["sl_dist"] * settings.trail_multiplier
@@ -285,11 +286,13 @@ def main():
             # TP2: close second tranche at 1:2 (3-target model only)
 
             if position["tp3_cents"] > 0 and position["tp1_hit"] and not position["tp2_hit"] and position["remaining_cents"] > 0 and \
+               i != position.get("tp_hit_bar") and \
                ((is_buy and bar["high"] >= tp2_level) or (not is_buy and bar["low"] <= tp2_level)):
                 lots = min(position["tp2_cents"], position["remaining_cents"]) / 100.0
                 book(lots, tp2_level, "tp2")
                 position["remaining_cents"] -= min(position["tp2_cents"], position["remaining_cents"])
                 position["tp2_hit"] = True
+                position["tp_hit_bar"] = i
                 # Activate trailing on remaining 30%
                 if position["remaining_cents"] > 0:
                     trail_dist = position["sl_dist"] * settings.trail_multiplier
@@ -319,8 +322,9 @@ def main():
                 book(lots, position["trail_level"], "trail")
                 position["remaining_cents"] = 0
 
-            # SL/be check on remaining position
+            # SL/be check on remaining position — skip the bar that triggered TP1/TP2
             if position["remaining_cents"] > 0 and \
+               i != position.get("tp_hit_bar") and \
                ((is_buy and bar["low"] <= position["sl"]) or (not is_buy and bar["high"] >= position["sl"])):
                 lots = position["remaining_cents"] / 100.0
                 book(lots, position["sl"],

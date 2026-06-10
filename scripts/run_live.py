@@ -169,6 +169,7 @@ class ScalperBot:
                 self._close_partial(self._position["tp1_lots"], tp1_level, "tp1", current_time)
                 self._position["sl"] = entry
                 self._position["tp1_hit"] = True
+                self._position["tp_hit_bar"] = j
                 if self._position["remaining_lots"] > 0:
                     self.connector.modify_position(
                         ticket=self._position["ticket"],
@@ -189,11 +190,13 @@ class ScalperBot:
             if self._position.get("tp3_lots", 0) > 0 and \
                self._position.get("tp1_hit", False) and not self._position.get("tp2_hit", False) and \
                self._position["remaining_lots"] > 0 and \
+               j != self._position.get("tp_hit_bar") and \
                ((is_buy and bar["high"] >= tp2_level) or (not is_buy and bar["low"] <= tp2_level)):
                 lots = min(self._position["tp2_lots"], self._position["remaining_lots"])
                 if lots > 0:
                     self._close_partial(lots, tp2_level, "tp2", current_time)
                     self._position["tp2_hit"] = True
+                    self._position["tp_hit_bar"] = j
                     if self._position["remaining_lots"] > 0:
                         trail_dist = sl_dist * self.settings.trail_multiplier
                         if is_buy:
@@ -221,8 +224,9 @@ class ScalperBot:
                ((is_buy and bar["low"] <= self._position["trail_level"]) or (not is_buy and bar["high"] >= self._position["trail_level"])):
                 self._close_partial(self._position["remaining_lots"], self._position["trail_level"], "trail", current_time)
 
-            # SL/be check on remaining position
+            # SL/be check on remaining position — skip the bar that triggered TP1/TP2
             if self._position["remaining_lots"] > 0 and \
+               j != self._position.get("tp_hit_bar") and \
                ((is_buy and bar["low"] <= self._position["sl"]) or (not is_buy and bar["high"] >= self._position["sl"])):
                 self._close_partial(self._position["remaining_lots"], self._position["sl"],
                                     "be" if self._position.get("tp1_hit") else "sl", current_time)
