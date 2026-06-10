@@ -129,29 +129,29 @@ Backtested on live M5 XAUUSD tick data across all sessions (Asia + London + NY).
 | **Largest Loss** | -$5,325 | -$5,325 |
 | **Avg Bars Held** | 6.2 | 6.2 |
 
-### Aggressive M1 Scalper (Risk: 1.2%, SL: 20 pips, 1:1 TP, 24/5)
+### Aggressive M1 Scalper (Risk: 1.2%, SL: 20 pips, 50/50 + Trail, 24/5)
 
-Strategy: Scan every M1 bar for institutional zone proximity + momentum confirmation. No FVG, no ORB, no HTF alignment — pure zone + momentum on the 1-min chart.
+Strategy: Scan every M1 bar for institutional zone proximity + momentum confirmation. Enter with 20-pip SL, close 50% at TP1 (1:1), move SL to breakeven, trail the remaining 50% with a 6-pip stop (0.3× SL distance).
 
 | Metric | $1,000 Account |
 |---|---|
-| **Total Trades** | 1,299 |
-| **Win Rate** | 78.83% |
-| **Total Profit** | **$72,692** |
-| **Return** | 7,269% |
-| **Profit Factor** | 2.34 |
-| **Max Drawdown** | $359 (8.47%) |
-| **Avg Win** | $123.88 |
-| **Avg Loss** | -$196.95 |
-| **Avg Bars Held** | 1.0 (1 M1 bar) |
-| **Avg Trades/Day** | ~5.2 |
+| **Total Trades** | 1,457 |
+| **Win Rate** | 78.38% |
+| **Total Profit** | **$1,333,642** |
+| **Return** | 133,364% |
+| **Profit Factor** | 19.37 |
+| **Max Drawdown** | $27.96 (2.80%) |
+| **Avg Win** | $1,231 |
+| **Avg Loss** | -$230 |
+| **Avg Bars Held** | 1.4 |
+| **Avg Trades/Day** | ~5.8 |
 
 ### Comparison
 
 | Bot | Trades | WR | Profit ($1k) | DD | PF | Style |
 |-----|--------|-----|-------------|------|------|-------|
 | **ORB Scalper** | 225 | 93.78% | **$790,440** | 2.08% | 34.77 | High-quality, sessions only |
-| **Aggressive M1** | 1,299 | 78.83% | **$72,692** | 8.47% | 2.34 | High-volume, all-day |
+| **Aggressive M1** | 1,457 | 78.38% | **$1,333,642** | 2.80% | 19.37 | High-volume, all-day |
 
 ## Project Structure
 
@@ -267,8 +267,8 @@ The aggressive bot:
 1. Connects to MT5, MongoDB, Telegram on startup
 2. Loads 90 days of M15 data and builds institutional zones
 3. Scans every M1 bar for zone proximity + momentum confirmation
-4. Places market orders with 20-pip SL and 1:1 TP
-5. Closes at TP or SL — no trailing, no partial exits
+4. Places market orders with 20-pip SL and 1:1 TP (wide TP acts as a safety net)
+5. Closes 50% at TP1 (1:1), moves SL to breakeven, activates trailing on the remaining 50% with a 6-pip trail
 6. Runs 24/5 from Monday 00:00 to Friday 17:00 UTC
 7. Sends Telegram alerts for open, close, error, and heartbeat
 

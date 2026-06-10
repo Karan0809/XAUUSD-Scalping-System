@@ -223,8 +223,7 @@ def main():
         if position:
             bar = df.iloc[i]
             is_buy = position["type"] == "buy"
-            sl_level = position["sl"]
-            tp_level = position["tp"]
+            sl_dist = position["sl_dist"]
 
             def book(lots, price, reason):
                 nonlocal balance
@@ -247,17 +246,50 @@ def main():
                     "exit_time": current_time, "date": date_str,
                 })
 
-            if not position.get("tp_hit") and \
-               ((is_buy and bar["high"] >= tp_level) or (not is_buy and bar["low"] <= tp_level)):
-                lots = position["remaining_cents"] / 100.0
-                book(lots, tp_level, "tp")
-                position["remaining_cents"] = 0
-                position["tp_hit"] = True
+            tp1_level = position["entry"] + sl_dist if is_buy else position["entry"] - sl_dist
 
-            elif position["remaining_cents"] > 0 and \
-                 ((is_buy and bar["low"] <= sl_level) or (not is_buy and bar["high"] >= sl_level)):
+            # TP1 at 1:1 — close 50%, move SL to BE, activate trail
+            if not position.get("tp1_hit") and \
+               ((is_buy and bar["high"] >= tp1_level) or (not is_buy and bar["low"] <= tp1_level)):
+                book(position["tp1_cents"] / 100.0, tp1_level, "tp1")
+                position["remaining_cents"] -= position["tp1_cents"]
+                position["sl"] = position["entry"]
+                position["tp1_hit"] = True
+                position["tp_hit_bar"] = i
+                trail_dist = sl_dist * settings.trail_multiplier
+                if is_buy:
+                    position["trail_level"] = bar["high"] - trail_dist
+                else:
+                    position["trail_level"] = bar["low"] + trail_dist
+                position["trailing_activated"] = True
+                position["trail_activation_bar"] = i
+
+            # Update trailing stop
+            if position.get("trailing_activated") and position["remaining_cents"] > 0:
+                trail_dist = sl_dist * settings.trail_multiplier
+                if is_buy:
+                    new_trail = bar["high"] - trail_dist
+                    if new_trail > position["trail_level"]:
+                        position["trail_level"] = new_trail
+                else:
+                    new_trail = bar["low"] + trail_dist
+                    if new_trail < position["trail_level"]:
+                        position["trail_level"] = new_trail
+
+            # Check trailing stop — skip activation bar
+            if position.get("trailing_activated") and position["remaining_cents"] > 0 and \
+               i != position.get("trail_activation_bar") and \
+               ((is_buy and bar["low"] <= position["trail_level"]) or (not is_buy and bar["high"] >= position["trail_level"])):
                 lots = position["remaining_cents"] / 100.0
-                book(lots, sl_level, "sl")
+                book(lots, position["trail_level"], "trail")
+                position["remaining_cents"] = 0
+
+            # SL/BE check — skip the bar that triggered TP1
+            if position["remaining_cents"] > 0 and \
+               i != position.get("tp_hit_bar") and \
+               ((is_buy and bar["low"] <= position["sl"]) or (not is_buy and bar["high"] >= position["sl"])):
+                lots = position["remaining_cents"] / 100.0
+                book(lots, position["sl"], "be" if position.get("tp1_hit") else "sl")
                 position["remaining_cents"] = 0
 
             if position["remaining_cents"] <= 0 and not position.get("closed"):
@@ -329,20 +361,27 @@ def main():
 
             trades_today += 1
             cents = round(lot_size * 100)
-            sl_level = entry_price - sl_price if direction == "buy" else entry_price + sl_price
-            tp_level = entry_price + sl_price if direction == "buy" else entry_price - sl_price
+            sl_dist = sl_price
+            sl_level = entry_price - sl_dist if direction == "buy" else entry_price + sl_dist
+            tp1_c = int(cents * 0.5)
+            tp2_c = cents - tp1_c
 
             position = {
                 "type": direction,
                 "entry": entry_price,
                 "sl": sl_level,
-                "tp": tp_level,
                 "remaining_cents": cents,
+                "tp1_cents": tp1_c,
                 "pnl": 0.0,
                 "entry_bar": i,
                 "entry_time": current_time,
-                "tp_hit": False,
+                "tp1_hit": False,
                 "closed": False,
+                "sl_dist": sl_dist,
+                "trailing_activated": False,
+                "trail_level": 0.0,
+                "trail_activation_bar": 0,
+                "tp_hit_bar": 0,
             }
 
         if balance > peak_balance:
