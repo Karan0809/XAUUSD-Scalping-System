@@ -168,6 +168,22 @@ class MT5Connector:
             raise MT5ConnectorError(f"Cannot get tick for {symbol}")
         return {"bid": tick.bid, "ask": tick.ask, "last": tick.last, "spread": round((tick.ask - tick.bid) / self._point(symbol), 1)}
 
+    def get_margin_rate(self, symbol: str = "XAUUSD") -> float:
+        info = self._call_with_retry(mt5.symbol_info, symbol)
+        if info is None:
+            raise MT5ConnectorError(f"Cannot get symbol info for {symbol}")
+        margin_per_lot = info.margin_initial
+        if margin_per_lot <= 0:
+            margin_per_lot = info.margin_maintenance
+        if margin_per_lot <= 0:
+            tick = self.get_tick(symbol)
+            acct = mt5.account_info()
+            if acct:
+                margin_per_lot = (tick["ask"] * 100) / acct.leverage
+            else:
+                margin_per_lot = tick["ask"] * 100
+        return margin_per_lot
+
     def get_symbol_info(self, symbol: str = "XAUUSD") -> Dict[str, Any]:
         if not self._connected:
             self.connect()
@@ -215,6 +231,21 @@ class MT5Connector:
             raise MT5ConnectorError(f"Cannot get tick for {symbol}")
 
         order_type_str = "buy" if order_type == mt5.ORDER_TYPE_BUY else "sell"
+        point = mt5.symbol_info(symbol).point
+        min_stop = max(point, 0.01)
+
+        if sl is not None:
+            if order_type == mt5.ORDER_TYPE_BUY:
+                sl = min(sl, tick.bid - min_stop)
+            else:
+                sl = max(sl, tick.ask + min_stop)
+
+        if tp is not None:
+            if order_type == mt5.ORDER_TYPE_BUY:
+                tp = max(tp, sl + min_stop)
+            else:
+                tp = min(tp, sl - min_stop)
+
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,

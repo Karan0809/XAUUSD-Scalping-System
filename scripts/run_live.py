@@ -104,7 +104,15 @@ class ScalperBot:
             return 0.01
         risk_amount = balance * (self.settings.risk_percent / 100.0)
         gold_oz_per_lot = 100.0
-        return max(0.01, min(round(risk_amount / (dist * gold_oz_per_lot), 2), 10.0))
+        risk_lots = round(risk_amount / (dist * gold_oz_per_lot), 2)
+
+        try:
+            margin_rate = self.connector.get_margin_rate()
+            margin_lots = max(0.01, round((balance * 0.9) / margin_rate, 2))
+        except Exception:
+            margin_lots = 10.0
+
+        return max(0.01, round(min(risk_lots, margin_lots, 10.0), 2))
 
     def _close_partial(self, lots: float, price: float, reason: str, current_time: datetime) -> None:
         pos = self._position
@@ -440,14 +448,39 @@ class ScalperBot:
                             if lot_size >= 0.01:
                                 mt5_type = mt5.ORDER_TYPE_BUY if signal["direction"] == "buy" else mt5.ORDER_TYPE_SELL
 
+                                tick = self.connector.get_tick()
+                                sl_dist = abs(signal["entry"] - signal["sl"])
+                                tp_dist = abs(signal["entry"] - signal["tp"])
+
+                                if signal["direction"] == "buy":
+                                    entry_price = tick["ask"]
+                                    new_sl = entry_price - sl_dist
+                                    min_sl = tick["bid"] - 0.01
+                                    if new_sl > min_sl:
+                                        new_sl = min_sl
+                                    new_tp = entry_price + tp_dist
+                                else:
+                                    entry_price = tick["bid"]
+                                    new_sl = entry_price + sl_dist
+                                    min_sl = tick["ask"] + 0.01
+                                    if new_sl < min_sl:
+                                        new_sl = min_sl
+                                    new_tp = entry_price - tp_dist
+
+                                actual_sl_dist = abs(entry_price - new_sl)
+                                if actual_sl_dist > sl_dist + 0.02:
+                                    logger.debug(f"SL clamped too wide: intended={sl_dist:.2f} actual={actual_sl_dist:.2f} spread={spread_pips}")
+                                    time.sleep(10)
+                                    continue
+
                                 try:
                                     order = self.connector.place_order(
                                         symbol=self.settings.symbol,
                                         order_type=mt5_type,
                                         volume=lot_size,
-                                        price=signal["entry"],
-                                        sl=signal["sl"],
-                                        tp=signal["tp"],
+                                        price=entry_price,
+                                        sl=new_sl,
+                                        tp=new_tp,
                                         comment=f"ORB {signal.get('setup', '')}",
                                     )
                                     self._last_signal_time = current_time

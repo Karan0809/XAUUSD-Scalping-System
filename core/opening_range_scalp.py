@@ -631,7 +631,7 @@ class OpeningRangeScalp:
         sl = None
         setup = None
 
-        max_free_sl = 0.20
+        max_free_sl = 0.30
         if pullback is not None:
             entry_price = pullback["entry"]
             sl = pullback["sl"]
