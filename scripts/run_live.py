@@ -245,8 +245,7 @@ class ScalperBot:
             trade = self._position
             trade["exit"] = trade.get("_last_price", None)
             trade["exit_reason"] = "trail" if trade.get("trailing_activated") else \
-                                   ("tp3" if trade.get("tp3_hit") else \
-                                    ("tp2" if trade.get("tp2_hit") else "sl/be"))
+                                   ("tp2" if trade.get("tp2_hit") else "sl/be")
             trade["close_time"] = current_time
 
             logger.info(
@@ -417,6 +416,17 @@ class ScalperBot:
                     logger.info(
                         f"Friday close — sleeping {secs_until_monday / 3600:.1f}h until Monday"
                     )
+                    if self._position is not None:
+                        try:
+                            self.connector.close_position({
+                                "symbol": self.settings.symbol,
+                                "ticket": self._position["ticket"],
+                                "volume": self._position["remaining_lots"],
+                                "type": self._position["type"],
+                            })
+                            logger.info("Closed open position before Friday shutdown")
+                        except Exception as e:
+                            logger.error(f"Failed to close position before Friday shutdown: {e}")
                     self._position = None
                     self.mongo.disconnect()
                     self.connector.disconnect()
@@ -582,7 +592,7 @@ class ScalperBot:
                                         "trail_activation_bar": 0,
                                         "trade_id": trade_id,
                                         "open_time": current_time,
-                                        "ticket": order.get("order", 0),
+                                        "ticket": order.get("deal", order.get("order", 0)),
                                     }
                                     self.mongo.save_trade({
                                         "trade_id": trade_id,

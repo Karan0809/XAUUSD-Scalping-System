@@ -253,7 +253,7 @@ The bot:
 8. Places market orders with SL and wide TP (SL recalculated from current tick, never stale signal price; SL also checked to be ≥ 5 pips from bid/ask)
 9. Manages every open position via bar-by-bar iteration (TP1, TP2, trail, SL/BE)
 10. Sends Telegram alerts for open, close, error, and heartbeat
-11. Disconnects at 17:00 UTC Friday and sleeps until Monday 00:00 UTC (auto-restart)
+11. Closes any open position at 17:00 UTC Friday, disconnects, and sleeps until Monday 00:00 UTC (auto-restart)
 
 ### Backtesting
 
