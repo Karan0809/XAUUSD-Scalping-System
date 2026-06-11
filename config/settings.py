@@ -57,6 +57,21 @@ class ScalperSettings:
     backtest_initial_balance: float = 1000.0
     backtest_commission: float = 3.5
 
+    min_balance: float = 50.0
+
+    def adjust_for_balance(self, balance: float) -> "ScalperSettings":
+        import copy
+        s = copy.copy(self)
+        if balance < s.min_balance:
+            raise ValueError(f"Balance ${balance:.2f} below minimum ${s.min_balance:.2f}")
+        if balance < 200:
+            s.risk_percent = min(s.risk_percent, 1.0)
+            s.max_daily_trades = min(s.max_daily_trades, 5)
+        elif balance < 500:
+            s.risk_percent = min(s.risk_percent, 1.5)
+            s.max_daily_trades = min(s.max_daily_trades, 10)
+        return s
+
     def validate(self) -> bool:
         errors = []
         if self.risk_percent <= 0 or self.risk_percent > 5:

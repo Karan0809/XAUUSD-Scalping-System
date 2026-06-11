@@ -123,10 +123,6 @@ class ScalperBot:
         comm = self.settings.backtest_commission * lots
         profit = round(pdiff * lots * 100 - comm, 2)
 
-        pos["_last_price"] = price
-        pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
-        pos["remaining_lots"] = round(pos["remaining_lots"] - lots, 2)
-
         ticket = pos.get("ticket")
         if ticket:
             try:
@@ -138,6 +134,11 @@ class ScalperBot:
                 })
             except Exception as e:
                 logger.error(f"Partial close {reason} failed: {e}")
+                return
+
+        pos["_last_price"] = price
+        pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
+        pos["remaining_lots"] = round(pos["remaining_lots"] - lots, 2)
 
         logger.info(
             f"PARTIAL {reason.upper()}: {lots:.2f} lots @ {price:.2f} "
@@ -306,13 +307,66 @@ class ScalperBot:
         account = self.connector.get_account_info()
         logger.info(f"Account: {account['login']}, Balance: ${account['balance']:.2f}")
 
+        try:
+            self.settings = self.settings.adjust_for_balance(account["balance"])
+            risk_pct = self.settings.risk_percent
+            max_trd = self.settings.max_daily_trades
+        except ValueError as e:
+            logger.error(str(e))
+            self.telegram.alert_error(str(e))
+            return False
+
+        existing = self.connector.get_positions(self.settings.symbol)
+        if existing:
+            p = existing[0]
+            self._position = {
+                "type": p["type"],
+                "entry": p["price_open"],
+                "sl": p["sl"],
+                "tp": p["tp"],
+                "lot_size": p["volume"],
+                "original_sl": p["sl"],
+                "original_lot_size": p["volume"],
+                "tp1_lots": 0,
+                "tp2_lots": 0,
+                "tp3_lots": 0,
+                "remaining_lots": p["volume"],
+                "pnl": 0.0,
+                "tp1_hit": False,
+                "tp2_hit": False,
+                "tp3_hit": False,
+                "trailing_activated": False,
+                "trail_activation_bar": 0,
+                "trade_id": str(uuid4()),
+                "open_time": p["time"],
+                "ticket": p["ticket"],
+            }
+            cents = round(p["volume"] * 100)
+            if cents >= 10:
+                tp1_c = int(cents * 0.3)
+                tp2_c = int(cents * 0.4)
+                self._position["tp1_lots"] = tp1_c / 100.0
+                self._position["tp2_lots"] = tp2_c / 100.0
+                self._position["tp3_lots"] = (cents - tp1_c - tp2_c) / 100.0
+            elif cents >= 4:
+                tp1_c = int(cents * 0.5)
+                self._position["tp1_lots"] = tp1_c / 100.0
+                self._position["tp2_lots"] = (cents - tp1_c) / 100.0
+            else:
+                self._position["tp1_lots"] = p["volume"]
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            self._current_date = date_str
+            self._trades_today = 1
+            logger.info(f"Recovered orphaned position: {p['type']} {p['volume']:.2f} @ {p['price_open']:.2f} ticket={p['ticket']}")
+            self.telegram.alert_error(f"Recovered orphaned position: {p['type']} {p['volume']:.2f} @ {p['price_open']:.2f}")
+
         self.telegram._send(
             f"\U0001f916 <b>ORB Scalper Bot Started</b>\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
             f"Symbol: {self.settings.symbol}\n"
             f"Balance: ${account['balance']:.2f}\n"
             f"Strategy: ORB + Safety Filters\n"
-            f"Risk: {self.settings.risk_percent}% | Max/Day: {self.settings.max_daily_trades}\n"
+            f"Risk: {risk_pct}% | Max/Day: {max_trd}\n"
             f"Filters: Spread={self.settings.max_spread}pips "
             f"Trail={self.settings.trail_multiplier}x "
             f"CB={self.settings.circuit_breaker_max_daily_loss_pct}% "

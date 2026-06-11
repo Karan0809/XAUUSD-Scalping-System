@@ -28,7 +28,7 @@ When no ORB range is available (outside session hours, or before the opening can
 | **Entry method** | Pullback into zone or FVG anywhere |
 | **Validation** | Slow momentum, fib 0.5–0.618 discount, M5 reaction |
 
-Both ORB and free trade share the same 50-pip minimum SL, same partial-profit exit model (30/40/30 + trailing), and same daily trade limit.
+Both ORB and free trade share the same 50-pip minimum SL, same partial-profit exit model (30/40/30 + trailing), and same daily trade limit. Risk and max trades auto-adjust to account balance at startup.
 
 ### Entry Filters
 
@@ -88,13 +88,13 @@ Once a trade opens, the bot polls **every 30 seconds** and examines **every M5 b
 
 The model adapts automatically based on **lot size** (derived from account balance and risk %):
 
-**Single Target (< 4 cents / < $150 account)**
+**Single Target (≤ 3 cents / < $150 account)**
 
 | Step | Lots | Price | Result |
 |---|---|---|---|
 | TP1 | 100% (all) | 1:1 | Full close, trade ends |
 
-**50/50 + Trail (4–9 cents / ~$200–$500 account)**
+**50/50 + Trail (4–9 cents / $150–$500 account)**
 
 | Step | Lots | Price | Result |
 |---|---|---|---|
@@ -102,7 +102,7 @@ The model adapts automatically based on **lot size** (derived from account balan
 | Trail update | — | — | Trail level ratchets with price |
 | Trail hit | Remaining 50% | Trail level | Remaining closes at trail |
 
-**30/40/30 + Trail (10+ cents / $600+ account)**
+**30/40/30 + Trail (10+ cents / $500+ account)**
 
 | Step | Lots | Price | Result |
 |---|---|---|---|
@@ -138,28 +138,26 @@ Backtested on live M5 XAUUSD tick data across all sessions (Asia + London + NY).
 
 Strategy: Full ORB pipeline during sessions (breakout pullback, aggressive FVG, range reversal). Falls through to free trade mode (HTF direction + swing break + zone POI + FVG/pullback entry + full validation) at any time. All SLs enforced at minimum 50 pips. Same 30/40/30 + trailing exit model.
 
-| Metric | $1,000 Account |
-|---|---|
-| **Total Trades** | 1,993 |
-| **Win Rate** | 97.24% |
-| **Total Profit** | **$10,946,454** |
-| **Return** | 1,094,645% |
-| **Profit Factor** | 36.00 |
-| **Max Drawdown** | $1,070 (2.54%) |
-| **Avg Win** | $5,808 |
-| **Avg Loss** | -$5,620 |
-| **Largest Win** | $116,727 |
-| **Largest Loss** | -$95,360 |
-| **Avg Bars Held** | 2.3 |
-| **CB Blocked** | 0 bars (no single day hit the 3% loss limit) |
+| Metric | $1,000 Account | $100 Account |
+|---|---|---|---|
+| **Total Trades** | 2,068 | 2,067 |
+| **Win Rate** | 97.05% | 97.05% |
+| **Total Profit** | **$11,344,562** | **$11,279,405** |
+| **Profit Factor** | 35.27 | 35.15 |
+| **Max Drawdown** | $1,070 (2.54%) | $329 (4.24%) |
+| **Avg Win** | $5,816 | $5,786 |
+| **Avg Loss** | -$5,366 | -$5,354 |
+| **Largest Win** | $116,727 | $116,727 |
+| **Largest Loss** | -$95,360 | -$95,360 |
+| **Avg Bars Held** | 2.2 | 2.2 |
 
 ### Comparison
 
 | Bot | Trades | WR | Profit ($1k) | DD | PF | CB |
 |-----|--------|-----|-------------|------|------|------|
-| **ORB Scalper** (sessions only) | 225 | 93.78% | $790,440 | 2.08% | 34.77 | — |
-| **Aggressive M1** (zone+momentum) | 1,457 | 78.38% | $1,333,642 | 2.80% | 19.37 | 32,629 |
-| **Combined ORB + Free Trade** (50-pip SL) | **1,993** | **97.24%** | **$10,946,454** | **2.54%** | **36.00** | **0** |
+| **ORB Scalper** (sessions only, 20-pip SL) | 225 | 93.78% | $790,440 | 2.08% | 34.77 | — |
+| **Aggressive M1** (zone+momentum, 20-pip SL) | 1,457 | 78.38% | $1,333,642 | 2.80% | 19.37 | 32,629 |
+| **Combined ORB + Free Trade** (50-pip SL) | **2,068** | **97.05%** | **$11,344,562** | **2.54%** | **35.27** | **0** |
 
 ## Project Structure
 
@@ -247,13 +245,15 @@ python scripts/run_live.py
 The bot:
 1. Connects to MT5, MongoDB, Telegram on startup
 2. Loads 90 days of M15 data and builds institutional zones
-3. Polls for new M5 bars every **30 seconds** during trading hours
-4. **ORB mode:** Scans all sessions (Asia → London → NY) for breakout/pullback/reversal signals
-5. **Free trade mode:** Falls through to HTF + zone + FVG signals when no ORB range is active
-6. Places market orders with SL and wide TP
-7. Manages every open position via bar-by-bar iteration (TP1, TP2, trail, SL/BE)
-8. Sends Telegram alerts for open, close, error, and heartbeat
-9. Disconnects at 17:00 UTC Friday and sleeps until Monday 00:00 UTC (auto-restart)
+3. **Orphan recovery:** Scans for existing MT5 positions on startup — if one is found, adopts it into management (prevents duplicate trades after crash/restart)
+4. **Auto-adjust:** Scales risk % and max trades/day to account balance
+5. Polls for new M5 bars every **30 seconds** during trading hours
+6. **ORB mode:** Scans all sessions (Asia → London → NY) for breakout/pullback/reversal signals
+7. **Free trade mode:** Falls through to HTF + zone + FVG signals when no ORB range is active
+8. Places market orders with SL and wide TP (SL recalculated from current tick, never stale signal price; SL also checked to be ≥ 5 pips from bid/ask)
+9. Manages every open position via bar-by-bar iteration (TP1, TP2, trail, SL/BE)
+10. Sends Telegram alerts for open, close, error, and heartbeat
+11. Disconnects at 17:00 UTC Friday and sleeps until Monday 00:00 UTC (auto-restart)
 
 ### Backtesting
 
@@ -266,16 +266,17 @@ Optional flags:
 
 ## Risk Management
 
-- **Risk per trade:** 2.0% of current balance
-- **Max daily trades:** 15
+- **Risk per trade:** Auto-adjusts by balance: 1.0% (< $200), 1.5% ($200–$500), 2.0% ($500+)
+- **Max daily trades:** Auto-adjusts: 5 (< $200), 10 ($200–$500), 15 ($500+)
+- **Min balance:** $50 (bot refuses to start below this)
 - **Max SL:** 50 pips minimum (all trades); zone override picks tighter stop but final SL never less than 50 pips
+- **SL from bid/ask:** SL must be ≥ 5 pips from bid (buys) or ask (sells) — prevents wide-spread entries from placing SL directly at market
 - **Partial profit locking:** SL moves to breakeven after TP1 hit
 - **Trailing stop:** 0.3× SL distance, activates after TP1 (50-50) or TP2 (3-target); skips activation bar to avoid wick noise
-- **Spread filter:** Skips entry if spread > 30 pips
+- **Spread filter:** Skips entry if spread > 30 pips (checked from the same tick used for SL placement)
 - **Circuit breaker:** Blocks entry after 3% daily loss / 4 consecutive losses / 15% drawdown
 - **News filter:** (Optional) blocks entry during high-impact USD events (ForexFactory)
 - **Commission:** $3.50 per lot per side (built into all calculations)
-- **Minimum account:** $100 (smaller accounts use single-target exit at 1:1)
 
 ## Telegram Alerts
 
@@ -299,5 +300,8 @@ All trade alerts are tagged `[ORB]` or `[FREE]` so you can distinguish session-b
 - **Bar-by-bar position management.** On each 30s poll, the bot examines every M5 bar since the position's open time, applying TP1/TP2/trail/SL checks sequentially. Flags prevent re-triggering.
 - **Trail activation bar skip.** The trailing stop check skips the bar where it was just activated, preventing wick noise from stopping out the runner. Trail level is ratcheted on subsequent bars.
 - **Spread computed live** as `(ask − bid) / point` since `tick.spread` is unavailable on some MT5 builds.
+- **Same-tick SL placement.** Spread check, entry price, and SL calculation all use the same `get_tick()` call. This prevents the bug where a separate earlier tick passes the spread filter but the actual entry tick has wider spread, causing SL to land 1 pip from bid.
+- **Partial close failure guard.** MT5 close is attempted before state is updated. If the close fails (network blip, position already gone), `remaining_lots` is unchanged and the next poll retries.
+- **Orphan position recovery.** On startup, the bot scans for existing MT5 positions. If found, they're adopted into local management — no orphaned trades run unmanaged and no duplicate opens on top of them.
 - **Logs are line-buffered** (`reconfigure(line_buffering=True)`) for real-time terminal output.
 - **No external dependencies beyond MT5, pandas, numpy, pymongo, python-dotenv, requests, pydantic, python-json-logger.**
