@@ -28,7 +28,7 @@ When no ORB range is available (outside session hours, or before the opening can
 | **Entry method** | Pullback into zone or FVG anywhere |
 | **Validation** | Slow momentum, fib 0.5–0.618 discount, M5 reaction |
 
-Both ORB and free trade share the same 30-pip maximum SL, same partial-profit exit model (30/40/30 + trailing), and same daily trade limit.
+Both ORB and free trade share the same 30-pip minimum SL, same partial-profit exit model (30/40/30 + trailing), and same daily trade limit.
 
 ### Entry Filters
 
@@ -134,20 +134,20 @@ On every poll, the bot re-examines all M5 bars since entry (up to 30 bars back).
 
 Backtested on live M5 XAUUSD tick data across all sessions (Asia + London + NY). Commission: $3.50/lot/side.
 
-### Combined Bot (Risk: 2.0%, SL: 30-pips max, Max 15 trades/day, ORB + Free Trade)
+### Combined Bot (Risk: 2.0%, SL: 30-pips min, Max 15 trades/day, ORB + Free Trade)
 
-Strategy: Full ORB pipeline during sessions (breakout pullback, aggressive FVG, range reversal). Falls through to free trade mode (HTF direction + swing break + zone POI + FVG/pullback entry + full validation) at any time. All SLs capped at 30 pips. Same 30/40/30 + trailing exit model.
+Strategy: Full ORB pipeline during sessions (breakout pullback, aggressive FVG, range reversal). Falls through to free trade mode (HTF direction + swing break + zone POI + FVG/pullback entry + full validation) at any time. All SLs enforced at minimum 30 pips. Same 30/40/30 + trailing exit model.
 
 | Metric | $1,000 Account |
 |---|---|
-| **Total Trades** | 2,005 |
-| **Win Rate** | 97.91% |
-| **Total Profit** | **$11,488,327** |
-| **Return** | 1,148,833% |
-| **Profit Factor** | 38.33 |
-| **Max Drawdown** | $95,360 (1.08%) |
-| **Avg Win** | $6,007 |
-| **Avg Loss** | -$7,243 |
+| **Total Trades** | 1,993 |
+| **Win Rate** | 97.39% |
+| **Total Profit** | **$10,652,137** |
+| **Return** | 1,065,214% |
+| **Profit Factor** | 35.69 |
+| **Max Drawdown** | $95,360 (1.13%) |
+| **Avg Win** | $5,644 |
+| **Avg Loss** | -$5,841 |
 | **Largest Win** | $116,727 |
 | **Largest Loss** | -$95,360 |
 | **Avg Bars Held** | 2.3 |
@@ -159,8 +159,8 @@ Strategy: Full ORB pipeline during sessions (breakout pullback, aggressive FVG, 
 |-----|--------|-----|-------------|------|------|------|
 | **ORB Scalper** (sessions only) | 225 | 93.78% | $790,440 | 2.08% | 34.77 | — |
 | **Aggressive M1** (zone+momentum) | 1,457 | 78.38% | $1,333,642 | 2.80% | 19.37 | 32,629 |
-| **Combined ORB + Free Trade** (20 SL) | 2,005 | 98.00% | $11,350,043 | 1.09% | 38.03 | 0 |
-| **Combined ORB + Free Trade** (30 SL) | **2,005** | **97.91%** | **$11,488,327** | **1.08%** | **38.33** | **0** |
+| **Combined ORB + Free Trade** (original, tight SL) | 2,005 | 98.00% | $11,350,043 | 1.09% | 38.03 | 0 |
+| **Combined ORB + Free Trade** (30-pip min SL) | **1,993** | **97.39%** | **$10,652,137** | **1.13%** | **35.69** | **0** |
 
 ## Project Structure
 

@@ -488,9 +488,11 @@ class OpeningRangeScalp:
                 direction = reversal["direction"]
                 if direction == "buy":
                     sl = self._range_low - 0.05
+                    sl = min(sl, entry - 0.30)
                     tp = entry + range_width
                 else:
                     sl = self._range_high + 0.05
+                    sl = max(sl, entry + 0.30)
                     tp = entry - range_width
                 logger.info(
                     f"ORB range reversal {direction.upper()} at {entry:.2f} "
@@ -577,6 +579,14 @@ class OpeningRangeScalp:
                 if zone_dist <= max_zone_dist:
                     sl = zone_sl if sl is None else min(sl, zone_sl)
 
+        # Ensure minimum SL distance for breathing room
+        if sl is not None:
+            min_sl = 0.30
+            if breakout_dir == "buy":
+                sl = min(sl, entry_price - min_sl)
+            else:
+                sl = max(sl, entry_price + min_sl)
+
         sl_distance = abs(entry_price - sl) if sl else 0.01
         if breakout_dir == "buy":
             tp = entry_price + sl_distance * 10.0
@@ -635,10 +645,6 @@ class OpeningRangeScalp:
         if pullback is not None:
             entry_price = pullback["entry"]
             sl = pullback["sl"]
-            if direction == "buy":
-                sl = max(sl, entry_price - max_free_sl)
-            else:
-                sl = min(sl, entry_price + max_free_sl)
             if not self._check_slow_momentum(df_5min):
                 return None
             if not self._check_fib_discount(df_5min, entry_price, direction, pullback_poi):
@@ -666,6 +672,13 @@ class OpeningRangeScalp:
             zone_dist = abs(entry_price - zone_sl)
             if zone_dist <= max_free_sl:
                 sl = zone_sl if sl is None else min(sl, zone_sl)
+
+        # Ensure minimum SL for breathing room
+        if sl is not None:
+            if direction == "buy":
+                sl = min(sl, entry_price - max_free_sl)
+            else:
+                sl = max(sl, entry_price + max_free_sl)
 
         sl_distance = abs(entry_price - sl)
         if sl_distance < 0.01:

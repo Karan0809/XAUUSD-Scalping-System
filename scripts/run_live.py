@@ -276,7 +276,7 @@ class ScalperBot:
                 "tp2_hit": trade.get("tp2_hit", False),
                 "tp3_hit": trade.get("tp3_hit", False),
             })
-            self._orb.reset_entry()
+            self.orb.reset_entry()
             self._position = None
             return True
 
