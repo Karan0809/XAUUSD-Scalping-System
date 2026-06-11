@@ -428,14 +428,6 @@ class ScalperBot:
                             time.sleep(60)
                             continue
 
-                        # Spread check
-                        tick = self.connector.get_tick()
-                        spread_pips = tick["spread"]
-                        if spread_pips > self.settings.max_spread:
-                            logger.debug(f"Spread too high: {spread_pips} > {self.settings.max_spread}")
-                            time.sleep(10)
-                            continue
-
                         window_df = rates.iloc[max(0, i - 200):i + 1]
                         df_15min_window = self._df_15min[self._df_15min.index <= current_time] if self._df_15min is not None else pd.DataFrame()
                         signal = self.orb.analyze(window_df, df_15min_window, current_time, session=current_session)
@@ -450,6 +442,12 @@ class ScalperBot:
                                 mt5_type = mt5.ORDER_TYPE_BUY if signal["direction"] == "buy" else mt5.ORDER_TYPE_SELL
 
                                 tick = self.connector.get_tick()
+                                spread_pips = tick["spread"]
+                                if spread_pips > self.settings.max_spread:
+                                    logger.debug(f"Spread too high: {spread_pips} > {self.settings.max_spread}")
+                                    time.sleep(10)
+                                    continue
+
                                 sl_dist = abs(signal["entry"] - signal["sl"])
                                 tp_dist = abs(signal["entry"] - signal["tp"])
 
@@ -460,6 +458,11 @@ class ScalperBot:
                                     if new_sl > min_sl:
                                         new_sl = min_sl
                                     new_tp = entry_price + tp_dist
+                                    bid_dist = abs(new_sl - tick["bid"])
+                                    if bid_dist < 0.05:
+                                        logger.debug(f"SL too close to bid: {bid_dist:.2f} spread={spread_pips}")
+                                        time.sleep(10)
+                                        continue
                                 else:
                                     entry_price = tick["bid"]
                                     new_sl = entry_price + sl_dist
@@ -467,6 +470,11 @@ class ScalperBot:
                                     if new_sl < min_sl:
                                         new_sl = min_sl
                                     new_tp = entry_price - tp_dist
+                                    ask_dist = abs(new_sl - tick["ask"])
+                                    if ask_dist < 0.05:
+                                        logger.debug(f"SL too close to ask: {ask_dist:.2f} spread={spread_pips}")
+                                        time.sleep(10)
+                                        continue
 
                                 actual_sl_dist = abs(entry_price - new_sl)
                                 if actual_sl_dist > sl_dist + 0.02:
