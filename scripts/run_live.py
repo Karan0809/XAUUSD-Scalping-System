@@ -416,6 +416,7 @@ class ScalperBot:
                     logger.info(
                         f"Friday close — sleeping {secs_until_monday / 3600:.1f}h until Monday"
                     )
+                    position_closed = False
                     if self._position is not None:
                         try:
                             self.connector.close_position({
@@ -425,9 +426,11 @@ class ScalperBot:
                                 "type": self._position["type"],
                             })
                             logger.info("Closed open position before Friday shutdown")
+                            position_closed = True
                         except Exception as e:
                             logger.error(f"Failed to close position before Friday shutdown: {e}")
-                    self._position = None
+                    if position_closed:
+                        self._position = None
                     self.mongo.disconnect()
                     self.connector.disconnect()
                     time.sleep(secs_until_monday)

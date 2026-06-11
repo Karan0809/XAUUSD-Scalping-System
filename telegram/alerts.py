@@ -212,7 +212,10 @@ class TelegramNotifier:
         if rr_total > 0:
             exit_line += f" | +{rr_total:.2f}R"
 
-        reason_emoji = {"tp1": "\U0001f3c6", "tp2": "\U0001f3c6", "trail": "\U0001f4c8", "be": "\U0001f504", "sl": "\U0001f6ab"}.get(reason, "\u2753")
+        reason_emoji = {"tp1": "\U0001f3c6", "tp2": "\U0001f3c6", "tp3": "\U0001f3c6", "trail": "\U0001f4c8", "be": "\U0001f504", "sl": "\U0001f6ab"}.get(reason, "\u2753")
+        reason_label = reason.upper()
+        if reason == "trail" and trade.get("tp3_lots", 0) > 0 and tp2_hit:
+            reason_label = "TRAIL (runner)"
 
         msg = (
             f"{emoji} <b>CLOSE [{tag}]</b>\n"
@@ -220,7 +223,7 @@ class TelegramNotifier:
             f"{self._dir_emoji(direction)} {direction.upper()}{session_info}\n"
             f"Entry: <code>{entry:.2f}</code> | Lot: {lot:.2f}\n"
             f"{exit_line}\n"
-            f"{reason_emoji} {reason.upper()} | {hits_str}\n"
+            f"{reason_emoji} {reason_label} | {hits_str}\n"
             f"Duration: {duration}\n"
             f"\U0001f4b5 ${balance:.2f}\n"
             f"{label}\n"

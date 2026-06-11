@@ -407,7 +407,7 @@ class AggressiveBot:
                                         "tp_hit_bar": 0,
                                         "trade_id": trade_id,
                                         "open_time": current_time,
-                                        "ticket": order.get("order", 0),
+                                        "ticket": order.get("deal", order.get("order", 0)),
                                     }
                                     self.mongo.save_trade({
                                         "trade_id": trade_id,
