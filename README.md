@@ -28,7 +28,7 @@ When no ORB range is available (outside session hours, or before the opening can
 | **Entry method** | Pullback into zone or FVG anywhere |
 | **Validation** | Slow momentum, fib 0.5–0.618 discount, M5 reaction |
 
-Both ORB and free trade share the same 30-pip minimum SL, same partial-profit exit model (30/40/30 + trailing), and same daily trade limit.
+Both ORB and free trade share the same 50-pip minimum SL, same partial-profit exit model (30/40/30 + trailing), and same daily trade limit.
 
 ### Entry Filters
 
@@ -68,7 +68,7 @@ Standard levels: **1.0, 0.786, 0.618, 0.5, 0.382, 0.236, 0.0**. Only the 0.5–0
 | Type | Trigger | Condition |
 |---|---|---|
 | **Free Pullback** | Price pulls back into an institutional zone | 5-min candle reversal within zone + fib 0.5–0.618 + slow momentum + reaction |
-| **Free FVG** | FVG forms in the direction of the HTF trend | Entry at FVG midpoint, 30-pip fixed SL, no zone proximity required |
+| **Free FVG** | FVG forms in the direction of the HTF trend | Entry at FVG midpoint, 50-pip fixed SL, no zone proximity required |
 
 ## Position Management Lifecycle
 
@@ -134,20 +134,20 @@ On every poll, the bot re-examines all M5 bars since entry (up to 30 bars back).
 
 Backtested on live M5 XAUUSD tick data across all sessions (Asia + London + NY). Commission: $3.50/lot/side.
 
-### Combined Bot (Risk: 2.0%, SL: 30-pips min, Max 15 trades/day, ORB + Free Trade)
+### Combined Bot (Risk: 2.0%, SL: 50-pips min, Max 15 trades/day, ORB + Free Trade)
 
-Strategy: Full ORB pipeline during sessions (breakout pullback, aggressive FVG, range reversal). Falls through to free trade mode (HTF direction + swing break + zone POI + FVG/pullback entry + full validation) at any time. All SLs enforced at minimum 30 pips. Same 30/40/30 + trailing exit model.
+Strategy: Full ORB pipeline during sessions (breakout pullback, aggressive FVG, range reversal). Falls through to free trade mode (HTF direction + swing break + zone POI + FVG/pullback entry + full validation) at any time. All SLs enforced at minimum 50 pips. Same 30/40/30 + trailing exit model.
 
 | Metric | $1,000 Account |
 |---|---|
 | **Total Trades** | 1,993 |
-| **Win Rate** | 97.39% |
-| **Total Profit** | **$10,652,137** |
-| **Return** | 1,065,214% |
-| **Profit Factor** | 35.69 |
-| **Max Drawdown** | $95,360 (1.13%) |
-| **Avg Win** | $5,644 |
-| **Avg Loss** | -$5,841 |
+| **Win Rate** | 97.24% |
+| **Total Profit** | **$10,946,454** |
+| **Return** | 1,094,645% |
+| **Profit Factor** | 36.00 |
+| **Max Drawdown** | $1,070 (2.54%) |
+| **Avg Win** | $5,808 |
+| **Avg Loss** | -$5,620 |
 | **Largest Win** | $116,727 |
 | **Largest Loss** | -$95,360 |
 | **Avg Bars Held** | 2.3 |
@@ -159,8 +159,7 @@ Strategy: Full ORB pipeline during sessions (breakout pullback, aggressive FVG, 
 |-----|--------|-----|-------------|------|------|------|
 | **ORB Scalper** (sessions only) | 225 | 93.78% | $790,440 | 2.08% | 34.77 | — |
 | **Aggressive M1** (zone+momentum) | 1,457 | 78.38% | $1,333,642 | 2.80% | 19.37 | 32,629 |
-| **Combined ORB + Free Trade** (original, tight SL) | 2,005 | 98.00% | $11,350,043 | 1.09% | 38.03 | 0 |
-| **Combined ORB + Free Trade** (30-pip min SL) | **1,993** | **97.39%** | **$10,652,137** | **1.13%** | **35.69** | **0** |
+| **Combined ORB + Free Trade** (50-pip SL) | **1,993** | **97.24%** | **$10,946,454** | **2.54%** | **36.00** | **0** |
 
 ## Project Structure
 
@@ -269,7 +268,7 @@ Optional flags:
 
 - **Risk per trade:** 2.0% of current balance
 - **Max daily trades:** 15
-- **Max SL:** 30 pips (free trade mode); ORB mode uses breakout-based SL but benefits from the zone SL fix that always picks the tighter stop
+- **Max SL:** 50 pips minimum (all trades); zone override picks tighter stop but final SL never less than 50 pips
 - **Partial profit locking:** SL moves to breakeven after TP1 hit
 - **Trailing stop:** 0.3× SL distance, activates after TP1 (50-50) or TP2 (3-target); skips activation bar to avoid wick noise
 - **Spread filter:** Skips entry if spread > 30 pips
@@ -291,6 +290,8 @@ Optional flags:
 | **Error** | On failure | Error message and timestamp |
 
 All trade alerts are tagged `[ORB]` or `[FREE]` so you can distinguish session-based entries from free-trade fallback entries at a glance.
+
+**Message volume:** ~5 messages per trade (OPEN → TP1 → TP2 → TRAIL → CLOSE) = ~75/day at 15 trades max, plus 4 heartbeats + 1 summary ≈ **80 messages/day total**.
 
 ## Architecture Notes
 

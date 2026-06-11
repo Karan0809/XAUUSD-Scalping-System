@@ -488,11 +488,11 @@ class OpeningRangeScalp:
                 direction = reversal["direction"]
                 if direction == "buy":
                     sl = self._range_low - 0.05
-                    sl = min(sl, entry - 0.30)
+                    sl = min(sl, entry - 0.50)
                     tp = entry + range_width
                 else:
                     sl = self._range_high + 0.05
-                    sl = max(sl, entry + 0.30)
+                    sl = max(sl, entry + 0.50)
                     tp = entry - range_width
                 logger.info(
                     f"ORB range reversal {direction.upper()} at {entry:.2f} "
@@ -566,7 +566,7 @@ class OpeningRangeScalp:
             else:
                 return None
 
-        max_zone_dist = 0.30
+        max_zone_dist = 0.50
         if best_zone is not None:
             if breakout_dir == "buy":
                 zone_sl = best_zone.zone_low - 0.03
@@ -581,7 +581,7 @@ class OpeningRangeScalp:
 
         # Ensure minimum SL distance for breathing room
         if sl is not None:
-            min_sl = 0.30
+            min_sl = 0.50
             if breakout_dir == "buy":
                 sl = min(sl, entry_price - min_sl)
             else:
@@ -641,7 +641,7 @@ class OpeningRangeScalp:
         sl = None
         setup = None
 
-        max_free_sl = 0.30
+        max_free_sl = 0.50
         if pullback is not None:
             entry_price = pullback["entry"]
             sl = pullback["sl"]

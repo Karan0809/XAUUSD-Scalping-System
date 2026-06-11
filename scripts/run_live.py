@@ -147,6 +147,7 @@ class ScalperBot:
             f"PARTIAL {pos['type'].upper()} {lots:.2f} {pos['entry']:.2f} {price:.2f} {profit:.2f}",
             extra={"trade": pos, "partial_reason": reason, "partial_lots": lots},
         )
+        self.telegram.alert_partial(pos, reason, lots, price, profit, pos["pnl"])
 
     def _manage_position(self, df: pd.DataFrame, i: int, current_time: datetime) -> bool:
         if self._position is None:
@@ -502,10 +503,10 @@ class ScalperBot:
                                     self._position = {
                                         "type": signal["direction"],
                                         "entry": order["price"],
-                                        "sl": signal["sl"],
-                                        "tp": signal["tp"],
+                                        "sl": new_sl,
+                                        "tp": new_tp,
                                         "lot_size": lot_size,
-                                        "original_sl": signal["sl"],
+                                        "original_sl": new_sl,
                                         "original_lot_size": lot_size,
                                         "tp1_lots": tp1_c / 100.0,
                                         "tp2_lots": tp2_c / 100.0,
@@ -526,8 +527,8 @@ class ScalperBot:
                                         "symbol": self.settings.symbol,
                                         "signal_type": signal["direction"],
                                         "entry_price": order["price"],
-                                        "stop_loss": signal["sl"],
-                                        "take_profit": signal["tp"],
+                                        "stop_loss": new_sl,
+                                        "take_profit": new_tp,
                                         "lot_size": lot_size,
                                         "session_date": current_time.strftime("%Y-%m-%d"),
                                         "open_time": current_time,
@@ -537,11 +538,11 @@ class ScalperBot:
                                     logger.info(
                                         f"ORB TRADE {signal['direction'].upper()} "
                                         f"{lot_size} @ {order['price']:.2f} "
-                                        f"SL={signal['sl']:.2f} TP={signal['tp']:.2f}"
+                                        f"SL={new_sl:.2f} TP={new_tp:.2f}"
                                     )
                                     trade_logger.info(
                                         f"OPEN {signal['direction'].upper()} {lot_size} "
-                                        f"{order['price']:.2f} {signal['sl']:.2f} {signal['tp']:.2f}",
+                                        f"{order['price']:.2f} {new_sl:.2f} {new_tp:.2f}",
                                         extra={"trade": self._position},
                                     )
                                     acct = self.connector.get_account_info()

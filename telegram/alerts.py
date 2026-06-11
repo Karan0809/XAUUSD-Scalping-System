@@ -228,6 +228,31 @@ class TelegramNotifier:
         )
         self._send(msg)
 
+    def alert_partial(self, trade: Dict[str, Any], reason: str, lots: float, price: float, profit: float, cumulative: float) -> None:
+        direction = trade.get("type", "").lower()
+        entry = trade.get("entry", 0)
+        setup = trade.get("setup", "")
+        label = self._setup_label(setup)
+        is_free = self._is_free_setup(setup)
+        tag = "FREE" if is_free else "ORB"
+
+        emoji = "\U0001f7e2" if profit >= 0 else "\U0001f534"
+        reason_upper = reason.upper()
+        reason_emoji = {"TP1": "\U0001f3c6", "TP2": "\U0001f3c6", "TP3": "\U0001f3c6", "TRAIL": "\U0001f4c8", "BE": "\U0001f504", "SL": "\U0001f6ab"}.get(reason_upper, "\u2795")
+
+        msg = (
+            f"{emoji} <b>PARTIAL [{tag}]</b>\n"
+            f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+            f"{self._dir_emoji(direction)} {direction.upper()}\n"
+            f"{reason_emoji} {reason_upper}\n"
+            f"Lots: {lots:.2f} @ <code>{price:.2f}</code>\n"
+            f"P&L: <b>{'+' if profit >= 0 else ''}${profit:.2f}</b> (cum: ${cumulative:.2f})\n"
+            f"Entry: <code>{entry:.2f}</code>\n"
+            f"{label}\n"
+            f"{fmt_et(fmt='%I:%M:%S %p')}"
+        )
+        self._send(msg)
+
     def alert_error(self, error_message: str) -> None:
         msg = (
             f"\u26a0\ufe0f <b>ERROR</b>\n"
