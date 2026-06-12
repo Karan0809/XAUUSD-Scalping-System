@@ -134,7 +134,13 @@ class ScalperBot:
                 })
             except Exception as e:
                 logger.error(f"Partial close {reason} failed: {e}")
-                return
+                try:
+                    positions = self.connector.get_positions(self.settings.symbol)
+                    still_open = any(p["ticket"] == ticket for p in positions)
+                except Exception:
+                    still_open = True
+                if still_open:
+                    return
 
         pos["_last_price"] = price
         pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
