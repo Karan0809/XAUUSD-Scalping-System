@@ -167,6 +167,7 @@ class AggressiveBot:
                     still_open = True
                 if still_open:
                     return
+                pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
                 pos["remaining_lots"] = 0.0
                 return
 
