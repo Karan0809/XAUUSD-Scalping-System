@@ -35,7 +35,7 @@ class ScalperSettings:
     max_slippage_points: float = 0.50
 
     trailing_stop_enabled: bool = True
-    trail_multiplier: float = 0.3
+    trail_multiplier: float = 0.2
 
     news_filter_enabled: bool = False
     news_blackout_minutes: int = 30
