@@ -1,18 +1,20 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 from dotenv import load_dotenv
 
-load_dotenv()
+
+def _env(key: str, default: str = "") -> str:
+    return os.getenv(key, default)
 
 
 @dataclass
 class ScalperSettings:
     symbol: str = "XAUUSD"
-    mt5_server: str = os.getenv("MT5_SERVER", "ICMarkets-Demo")
-    mt5_login: int = int(os.getenv("MT5_LOGIN", "0"))
-    mt5_password: str = os.getenv("MT5_PASSWORD", "")
-    mt5_path: str = os.getenv("MT5_PATH", r"C:\Program Files\MetaTrader 5\terminal64.exe")
+    mt5_server: str = field(default_factory=lambda: _env("MT5_SERVER", "ICMarkets-Demo"))
+    mt5_login: int = field(default_factory=lambda: int(_env("MT5_LOGIN", "0")))
+    mt5_password: str = field(default_factory=lambda: _env("MT5_PASSWORD", ""))
+    mt5_path: str = field(default_factory=lambda: _env("MT5_PATH", r"C:\Program Files\MetaTrader 5\terminal64.exe"))
 
     asia_start_hour: int = 0
     asia_end_hour: int = 9
@@ -41,14 +43,14 @@ class ScalperSettings:
     circuit_breaker_max_consecutive_losses: int = 4
     circuit_breaker_max_drawdown_pct: float = 15.0
 
-    mongo_uri: str = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+    mongo_uri: str = field(default_factory=lambda: _env("MONGO_URI", "mongodb://localhost:27017"))
     mongo_db: str = "xauusd_scalper"
     mongo_trades_collection: str = "trades"
     mongo_signals_collection: str = "signals"
     mongo_metrics_collection: str = "metrics"
 
-    telegram_token: str = os.getenv("TELEGRAM_TOKEN", "")
-    telegram_chat_id: str = os.getenv("TELEGRAM_CHAT_ID", "")
+    telegram_token: str = field(default_factory=lambda: _env("TELEGRAM_TOKEN", ""))
+    telegram_chat_id: str = field(default_factory=lambda: _env("TELEGRAM_CHAT_ID", ""))
 
     log_level: str = "INFO"
     log_dir: str = "logs"
@@ -87,9 +89,10 @@ class ScalperSettings:
 _settings: Optional[ScalperSettings] = None
 
 
-def get_settings() -> ScalperSettings:
+def get_settings(env_file: Optional[str] = None) -> ScalperSettings:
     global _settings
     if _settings is None:
+        load_dotenv(env_file or ".env", override=True)
         _settings = ScalperSettings()
         _settings.validate()
     return _settings

@@ -142,11 +142,14 @@ Trades all sessions using ORB pipeline (breakout pullback, aggressive FVG, range
 |---|---|
 | **Total Trades** | 518 |
 | **Win Rate** | 95.0% |
-| **Total Profit** | **$82,485** |
-| **Profit Factor** | 102.81 |
-| **Max Drawdown** | $15.78 (1.01%) |
-| **Avg Win / Loss** | +$169.24 / -$29.97 |
-| **Largest Win / Loss** | +$1,648.69 / -$52.05 |
+| **Total Trades** | 518 |
+| **Win Rate** | 95.0% |
+| **Total Profit** | **$83,266** |
+| **Profit Factor** | 103.87 |
+| **Max Drawdown** | $15.81 (1.02%) |
+| **Avg Win / Loss** | +$170.82 / -$29.95 |
+| **Largest Win / Loss** | +$1,489.53 / -$51.56 |
+| **Recovery Trades** | 4 |
 | **Avg Bars Held** | 2.0 |
 | **Filters** | Spread=442 CB=0 |
 
@@ -158,11 +161,11 @@ Trades 24/7 on zone+momentum confluence with fixed 20-pip SL. No session awarene
 |---|---|
 | **Total Trades** | 1,455 |
 | **Win Rate** | 77.7% |
-| **Total Profit** | **$68,244** |
-| **Profit Factor** | 18.70 |
+| **Total Profit** | **$68,249** |
+| **Profit Factor** | 18.69 |
 | **Max Drawdown** | $15.14 (1.46%) |
-| **Avg Win / Loss** | +$63.75 / -$11.90 |
-| **Largest Win / Loss** | +$712.94 / -$12.25 |
+| **Avg Win / Loss** | +$63.75 / -$11.91 |
+| **Largest Win / Loss** | +$712.98 / -$12.25 |
 | **Avg Bars Held** | 1.4 |
 | **Filters** | Zone=0 Mom=1,591 Spread=425 CB=5,123 |
 
@@ -175,6 +178,7 @@ Trades 24/7 on zone+momentum confluence with fixed 20-pip SL. No session awarene
 | **Slippage model** (1-2 pip entry, 0-1 pip exit) | More realistic fills, prevents edge-case overperformance. |
 | **`elif` in session/date reset** | Stopped double-reset bug that cleared `_entry_triggered`, causing duplicate entries. |
 | **3-bar minimum gap** | Safety net preventing re-entry within same session after a close. |
+| **Recovery entries** (ORB only) | After a loss, next entry tightens SL using M5 swing level — same risk, larger size. +$781 gain. |
 | **Spread filter 20 points** (was 60) | Blocks wider spreads — safer for tight 1-pip SL scalping. |
 
 ## Project Structure
@@ -196,10 +200,13 @@ Trades 24/7 on zone+momentum confluence with fixed 20-pip SL. No session awarene
 │   └── logger_setup.py          # Structured JSON logging (console + file)
 ├── scripts/
 │   ├── backtest.py              # Historical backtester (ORB + Free Trade)
-│   └── run_live.py              # Live trading bot (single combined strategy)
+│   ├── backtest_aggressive.py   # Historical backtester (Aggressive M1)
+│   ├── run_live.py              # Live trading bot (ORB + Free Trade)
+│   └── run_aggressive.py        # Live trading bot (Aggressive M1)
 ├── telegram/
 │   └── alerts.py                # Telegram notifications (open/close/error/heartbeat)
-├── .env                         # MT5 credentials, MongoDB URI, Telegram tokens
+├── .env                         # Default MT5 credentials, MongoDB URI, Telegram tokens
+├── .env.aggressive              # Env file for second account (aggressive bot)
 ├── requirements.txt
 └── README.md
 ```
@@ -224,7 +231,7 @@ pip install -r requirements.txt
 
 ### Configuration
 
-Fill in `.env` with your credentials:
+Create `.env` (or `.env.orb` / `.env.aggressive` for separate accounts):
 
 | Variable | Description |
 |---|---|
@@ -235,6 +242,19 @@ Fill in `.env` with your credentials:
 | `MONGO_URI` | MongoDB connection string |
 | `TELEGRAM_TOKEN` | Telegram bot token |
 | `TELEGRAM_CHAT_ID` | Telegram chat ID (comma-separated for multiple) |
+
+Run multiple bots with different accounts using `--env`:
+
+```bash
+# ORB bot (uses .env by default)
+python scripts/run_live.py
+
+# ORB bot with explicit env file
+python scripts/run_live.py --env .env.orb
+
+# Aggressive bot on a different account
+python scripts/run_aggressive.py --env .env.aggressive
+```
 
 ### Key Settings (`config/settings.py`)
 
@@ -257,7 +277,11 @@ Fill in `.env` with your credentials:
 ### Live Trading
 
 ```bash
+# ORB + Free Trade (default .env)
 python scripts/run_live.py
+
+# Aggressive M1 on different account
+python scripts/run_aggressive.py --env .env.aggressive
 ```
 
 The bot:

@@ -53,6 +53,7 @@ class BacktestResult:
     spread_filtered: int = 0
     cb_blocked: int = 0
     news_filtered: int = 0
+    recovery_trades: int = 0
 
 
 def parse_args():
@@ -168,6 +169,16 @@ def get_risk_amount(profit: float) -> float:
     return 10.0
 
 
+def refine_sl(df: pd.DataFrame, i: int, direction: str, entry: float, original_sl: float, lookback: int = 4) -> float:
+    window = df.iloc[max(0, i - lookback):i + 1]
+    if direction == "buy":
+        swing_low = window["low"].min()
+        return max(swing_low - 0.01, original_sl)
+    else:
+        swing_high = window["high"].max()
+        return min(swing_high + 0.01, original_sl)
+
+
 def calc_lot_size(balance: float, entry: float, sl: float, risk_pct: float, margin_rate: Optional[float] = None, profit: float = 0.0) -> float:
     dist = abs(entry - sl)
     if dist <= 0:
@@ -200,6 +211,7 @@ def print_results(result: BacktestResult):
     print(f"  Largest Loss:      ${result.largest_loss:.2f}")
     print(f"  Avg Bars Held:     {result.avg_bars_held:.1f}")
     print(f"  Total Commission:  ${result.total_commission:.2f}")
+    print(f"  Recovery Trades:   {result.recovery_trades}")
     print(f"  Filters:           Spread={result.spread_filtered} CB={result.cb_blocked} News={result.news_filtered}")
     print("=" * 60 + "\n")
 
@@ -245,6 +257,8 @@ def main():
     current_date = None
     m15_idx = 0
     last_entry_bar = -100
+    recovery_available = False
+    recovery_used_today = False
 
     for i in range(60, len(df)):
         current_time = df.index[i]
@@ -253,6 +267,8 @@ def main():
         if date_str != current_date:
             current_date = date_str
             trades_today = 0
+            recovery_available = False
+            recovery_used_today = False
             risk_mgr.start_day(date_str, balance)
 
         current_session = get_session(current_time.hour)
@@ -379,6 +395,7 @@ def main():
                     result.losing_trades += 1
                     result.avg_loss += pnl
                     result.largest_loss = min(result.largest_loss, pnl)
+                    recovery_available = True
                 risk_mgr.record_trade(pnl)
                 position = None
 
@@ -411,6 +428,13 @@ def main():
                 else:
                     entry_price -= random.uniform(0.01, 0.02)
                 sl = signal["sl"]
+                is_recovery = recovery_available and not recovery_used_today
+                if is_recovery:
+                    refined = refine_sl(df, i, signal["direction"], entry_price, sl)
+                    if refined != sl:
+                        sl = refined
+                        recovery_used_today = True
+                        result.recovery_trades += 1
                 lot_size = calc_lot_size(balance, entry_price, sl, settings.risk_percent, margin_rate, profit=balance - args.balance)
 
                 if lot_size >= 0.01:

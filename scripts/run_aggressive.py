@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import argparse
 import logging
 import time
 from uuid import uuid4
@@ -36,8 +37,9 @@ class AggressiveBot:
     M15_REFRESH_SECONDS = 300
     HEARTBEAT_SECONDS = 21600
 
-    def __init__(self):
-        self.settings = get_settings()
+    def __init__(self, env_file: str = ".env"):
+        self.env_file = env_file
+        self.settings = get_settings(env_file)
         self.connector = MT5Connector()
         self.zone_detector = InstitutionalZoneDetector()
         self.risk_mgr = RiskManager(
@@ -486,6 +488,9 @@ class AggressiveBot:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Aggressive M1 Scalper Live Bot")
+    parser.add_argument("--env", type=str, default=".env", help="Env file to load (default: .env)")
+    args = parser.parse_args()
     setup_logging()
-    bot = AggressiveBot()
+    bot = AggressiveBot(env_file=args.env)
     bot.run()
