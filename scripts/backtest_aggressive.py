@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
+import random
+
 import pandas as pd
 import numpy as np
 
@@ -21,6 +23,8 @@ from core.news_filter import NewsFilter
 from connectors.mt5_connector import MT5Connector, MT5ConnectorError
 
 logger = logging.getLogger(__name__)
+
+_MARGIN_RATE: Optional[float] = None
 
 
 @dataclass
@@ -61,6 +65,19 @@ def parse_args():
     parser.add_argument("--max-trades", type=int, default=20, help="Max trades per day")
     parser.add_argument("--output", type=str, default="aggressive_results.json")
     return parser.parse_args()
+
+
+def _fetch_margin_rate() -> float:
+    connector = MT5Connector()
+    try:
+        connector.connect()
+        rate = connector.get_margin_rate()
+        connector.disconnect()
+        logger.info(f"Margin rate: ${rate:.2f}/lot")
+        return rate
+    except Exception as e:
+        logger.warning(f"Failed to fetch margin rate: {e}, using default")
+        return 1000.0
 
 
 def load_m1_data(start: datetime, end: datetime) -> pd.DataFrame:
@@ -125,10 +142,15 @@ def load_15min_data(start: datetime, end: datetime) -> pd.DataFrame:
         sys.exit(1)
 
 
-def calc_lot_size(balance: float, risk_pct: float, sl_pips: float) -> float:
+def calc_lot_size(balance: float, risk_pct: float, sl_pips: float, margin_rate: Optional[float] = None) -> float:
     sl_price = sl_pips / 100.0
-    risk_amount = balance * (risk_pct / 100.0)
-    return max(0.01, min(round(risk_amount / (sl_price * 100), 2), 10.0))
+    risk_amount = 10.0
+    risk_lots = round(risk_amount / (sl_price * 100), 2)
+    if margin_rate is not None and margin_rate > 0:
+        margin_lots = max(0.01, round((balance * 0.9) / margin_rate, 2))
+    else:
+        margin_lots = 0.5
+    return max(0.01, round(min(risk_lots, margin_lots, 0.5), 2))
 
 
 def check_momentum(bars: pd.DataFrame, direction: str) -> bool:
@@ -182,6 +204,8 @@ def main():
     df = load_m1_data(start, end)
     df_15min = load_15min_data(start, end)
 
+    margin_rate = _fetch_margin_rate()
+
     zone_detector = InstitutionalZoneDetector()
     zone_detector.build_historical(df_15min)
 
@@ -204,6 +228,7 @@ def main():
     trades_today = 0
     current_date = None
     m15_idx = 0
+    last_entry_bar = -100
 
     for i in range(120, len(df)):
         current_time = df.index[i]
@@ -227,6 +252,11 @@ def main():
 
             def book(lots, price, reason):
                 nonlocal balance
+                slip = random.uniform(0.0, 0.01)
+                if is_buy:
+                    price -= slip
+                else:
+                    price += slip
                 pdiff = price - position["entry"]
                 if not is_buy:
                     pdiff = -pdiff
@@ -309,7 +339,7 @@ def main():
 
         elif trades_today < max_trades_per_day:
             spread_pips = df["spread"].iloc[i]
-            if spread_pips > settings.max_spread:
+            if spread_pips > 20.0:
                 result.spread_filtered += 1
                 continue
 
@@ -354,11 +384,18 @@ def main():
                 result.mom_filtered += 1
                 continue
 
+            if (i - last_entry_bar) < 3:
+                continue
             entry_price = price
-            lot_size = calc_lot_size(balance, risk_pct, sl_pips)
+            if direction == "buy":
+                entry_price += random.uniform(0.01, 0.02)
+            else:
+                entry_price -= random.uniform(0.01, 0.02)
+            lot_size = calc_lot_size(balance, risk_pct, sl_pips, margin_rate)
             if lot_size < 0.01:
                 continue
 
+            last_entry_bar = i
             trades_today += 1
             cents = round(lot_size * 100)
             sl_dist = sl_price

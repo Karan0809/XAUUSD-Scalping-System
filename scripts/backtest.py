@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 
+import random
+
 import pandas as pd
 import numpy as np
 
@@ -23,6 +25,8 @@ from core.news_filter import NewsFilter
 from connectors.mt5_connector import MT5Connector, MT5ConnectorError
 
 logger = logging.getLogger(__name__)
+
+_MARGIN_RATE: Optional[float] = None
 
 
 @dataclass
@@ -59,6 +63,19 @@ def parse_args():
     parser.add_argument("--risk", type=float, default=2.0)
     parser.add_argument("--output", type=str, default="scalper_results.json")
     return parser.parse_args()
+
+
+def _fetch_margin_rate() -> float:
+    connector = MT5Connector()
+    try:
+        connector.connect()
+        rate = connector.get_margin_rate()
+        connector.disconnect()
+        logger.info(f"Margin rate: ${rate:.2f}/lot")
+        return rate
+    except Exception as e:
+        logger.warning(f"Failed to fetch margin rate: {e}, using default")
+        return 1000.0
 
 
 def load_data(start: datetime, end: datetime) -> pd.DataFrame:
@@ -139,12 +156,17 @@ def get_session(hour: int) -> Optional[str]:
     return None
 
 
-def calc_lot_size(balance: float, entry: float, sl: float, risk_pct: float) -> float:
+def calc_lot_size(balance: float, entry: float, sl: float, risk_pct: float, margin_rate: Optional[float] = None) -> float:
     dist = abs(entry - sl)
     if dist <= 0:
         return 0.01
-    risk_amount = balance * (risk_pct / 100.0)
-    return max(0.01, min(round(risk_amount / (dist * 100), 2), 10.0))
+    risk_amount = 10.0
+    risk_lots = round(risk_amount / (dist * 100), 2)
+    if margin_rate is not None and margin_rate > 0:
+        margin_lots = max(0.01, round((balance * 0.9) / margin_rate, 2))
+    else:
+        margin_lots = 0.5
+    return max(0.01, round(min(risk_lots, margin_lots, 0.5), 2))
 
 
 def print_results(result: BacktestResult):
@@ -185,6 +207,7 @@ def main():
 
     df = load_data(start, end)
     df_15min = load_15min_data(start, end)
+    margin_rate = _fetch_margin_rate()
 
     zone_detector = InstitutionalZoneDetector()
     orb = OpeningRangeScalp(
@@ -209,6 +232,7 @@ def main():
     trades_today = 0
     current_date = None
     m15_idx = 0
+    last_entry_bar = -100
 
     for i in range(60, len(df)):
         current_time = df.index[i]
@@ -239,6 +263,11 @@ def main():
 
             def book(lots, price, reason):
                 nonlocal balance
+                slip = random.uniform(0.0, 0.01)
+                if is_buy:
+                    price -= slip
+                else:
+                    price += slip
                 pdiff = price - entry
                 if not is_buy:
                     pdiff = -pdiff
@@ -344,7 +373,7 @@ def main():
         elif trades_today < settings.max_daily_trades:
             # Spread check
             spread_pips = df["spread"].iloc[i]
-            if spread_pips > settings.max_spread:
+            if spread_pips > 20.0:
                 result.spread_filtered += 1
                 continue
 
@@ -363,12 +392,17 @@ def main():
 
             df_15min_window = df_15min[df_15min.index <= current_time]
             signal = orb.analyze(window_df, df_15min_window, current_time, session=current_session)
-            if signal is not None:
+            if signal is not None and (i - last_entry_bar) >= 3:
                 entry_price = signal["entry"]
+                if signal["direction"] == "buy":
+                    entry_price += random.uniform(0.01, 0.02)
+                else:
+                    entry_price -= random.uniform(0.01, 0.02)
                 sl = signal["sl"]
-                lot_size = calc_lot_size(balance, entry_price, sl, settings.risk_percent)
+                lot_size = calc_lot_size(balance, entry_price, sl, settings.risk_percent, margin_rate)
 
                 if lot_size >= 0.01:
+                    last_entry_bar = i
                     trades_today += 1
                     sl_dist = abs(entry_price - sl)
                     cents = round(lot_size * 100)

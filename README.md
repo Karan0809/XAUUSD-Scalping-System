@@ -28,7 +28,7 @@ When no ORB range is available (outside session hours, or before the opening can
 | **Entry method** | Pullback into zone or FVG anywhere |
 | **Validation** | Slow momentum, fib 0.5–0.618 discount, M5 reaction |
 
-Both ORB and free trade share the same 50-pip minimum SL, same partial-profit exit model (30/40/30 + trailing), and same daily trade limit. Risk and max trades auto-adjust to account balance at startup.
+Both ORB and free trade share the same fixed $10 risk per trade, same partial-profit exit model (30/40/30 + trailing), and same daily trade limit. Position sizes are fixed (not compounding) with a hard cap of 0.5 lots and 1-2 pip slippage applied on entry for realistic fills.
 
 ### Entry Filters
 
@@ -132,32 +132,50 @@ On every poll, the bot re-examines all M5 bars since entry (up to 30 bars back).
 
 ## Backtest Results (Sep 2025 – Jun 2026)
 
-Backtested on live M5 XAUUSD tick data across all sessions (Asia + London + NY). Commission: $3.50/lot/side.
+Backtested on live M5/M1 XAUUSD data across all sessions (Asia + London + NY). Commission: $3.50/lot/side. All tests use fixed $10 risk per trade, 0.5 lots hard cap, 1-2 pip entry slippage, 0-1 pip exit slippage, and a 20-point spread filter.
 
-### Combined Bot (Risk: 2.0%, SL: 50-pips min, Max 15 trades/day, ORB + Free Trade)
+### ORB Scalper
 
-Strategy: Full ORB pipeline during sessions (breakout pullback, aggressive FVG, range reversal). Falls through to free trade mode (HTF direction + swing break + zone POI + FVG/pullback entry + full validation) at any time. All SLs enforced at minimum 50 pips. Same 30/40/30 + trailing exit model.
+Trades all sessions using ORB pipeline (breakout pullback, aggressive FVG, range reversal) with free trade fallback. Each session allows at most 1 entry. Lot size determined by fixed $10 risk / SL distance, capped at 0.5 lots.
 
-| Metric | $1,000 Account | $100 Account |
-|---|---|---|---|
-| **Total Trades** | 2,068 | 2,067 |
-| **Win Rate** | 97.05% | 97.05% |
-| **Total Profit** | **$11,344,562** | **$11,279,405** |
-| **Profit Factor** | 35.27 | 35.15 |
-| **Max Drawdown** | $1,070 (2.54%) | $329 (4.24%) |
-| **Avg Win** | $5,816 | $5,786 |
-| **Avg Loss** | -$5,366 | -$5,354 |
-| **Largest Win** | $116,727 | $116,727 |
-| **Largest Loss** | -$95,360 | -$95,360 |
-| **Avg Bars Held** | 2.2 | 2.2 |
+| Metric | $1,000 Account |
+|---|---|
+| **Total Trades** | 518 |
+| **Win Rate** | 95.0% |
+| **Total Profit** | **$24,889** |
+| **Profit Factor** | 81.15 |
+| **Max Drawdown** | $10.56 (0.79%) |
+| **Avg Win / Loss** | +$51.20 / -$11.54 |
+| **Largest Win / Loss** | +$496.54 / -$24.03 |
+| **Avg Bars Held** | 2.0 |
+| **Filters** | Spread=442 CB=0 |
 
-### Comparison
+### Aggressive M1
 
-| Bot | Trades | WR | Profit ($1k) | DD | PF | CB |
-|-----|--------|-----|-------------|------|------|------|
-| **ORB Scalper** (sessions only, 20-pip SL) | 225 | 93.78% | $790,440 | 2.08% | 34.77 | — |
-| **Aggressive M1** (zone+momentum, 20-pip SL) | 1,457 | 78.38% | $1,333,642 | 2.80% | 19.37 | 32,629 |
-| **Combined ORB + Free Trade** (50-pip SL) | **2,068** | **97.05%** | **$11,344,562** | **2.54%** | **35.27** | **0** |
+Trades 24/7 on zone+momentum confluence with fixed 20-pip SL. No session awareness — enters any time zone and momentum align.
+
+| Metric | $1,000 Account |
+|---|---|
+| **Total Trades** | 1,455 |
+| **Win Rate** | 77.7% |
+| **Total Profit** | **$68,246** |
+| **Profit Factor** | 18.68 |
+| **Max Drawdown** | $15.05 (1.45%) |
+| **Avg Win / Loss** | +$63.75 / -$11.91 |
+| **Largest Win / Loss** | +$712.62 / -$12.25 |
+| **Avg Bars Held** | 1.4 |
+| **Filters** | Zone=0 Mom=1,591 Spread=425 CB=5,123 |
+
+### Key Fixes Applied
+
+| Fix | Impact |
+|---|---|
+| **Fixed $10 risk** (was 2% of balance) | Killed compounding explosion. Profits stay proportional. |
+| **0.5 lots hard cap** (was 10.0) | Limits position size regardless of account growth. |
+| **Slippage model** (1-2 pip entry, 0-1 pip exit) | More realistic fills, prevents edge-case overperformance. |
+| **`elif` in session/date reset** | Stopped double-reset bug that cleared `_entry_triggered`, causing duplicate entries. |
+| **3-bar minimum gap** | Safety net preventing re-entry within same session after a close. |
+| **Spread filter 20 points** (was 60) | Blocks wider spreads — safer for tight 1-pip SL scalping. |
 
 ## Project Structure
 
@@ -222,9 +240,9 @@ Fill in `.env` with your credentials:
 
 | Setting | Default | Description |
 |---|---|---|
-| `risk_percent` | 2.0 | Risk per trade (% of balance) |
+| `risk_percent` | 2.0 | Risk per trade (% of balance) — backtests override with fixed $10 |
 | `max_daily_trades` | 15 | Max trades per day |
-| `max_spread` | 30.0 | Max spread in pips before skipping entry |
+| `max_spread` | 20.0 | Max spread in points before skipping entry |
 | `trail_multiplier` | 0.3 | Trailing stop distance = multiplier × SL distance |
 | `trailing_stop_enabled` | True | Master toggle for trailing stop logic |
 | `circuit_breaker_max_daily_loss_pct` | 3.0 | Daily loss limit (%) — blocks new entries |
@@ -258,22 +276,29 @@ The bot:
 ### Backtesting
 
 ```bash
-python scripts/backtest.py --start 2025-09-01 --end 2026-06-03 --balance 1000 --risk 2.0
+# ORB Scalper (session-based, free trade fallback)
+python scripts/backtest.py --start 2025-09-01 --end 2026-06-15 --balance 1000
+
+# Aggressive M1 (zone+momentum, 24/7)
+python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-15 --balance 1000
 ```
 
-Optional flags:
-- `--output <file>` — save results as JSON (default: `scalper_results.json`)
+Both backtests use fixed $10 risk, 0.5 max lots, slippage model, and 20-point spread filter. Results are saved as JSON with `--output`.
+
+- `--risk <pct>` — risk percent (overridden by fixed $10 in current version)
+- `--output <file>` — save results as JSON
 
 ## Risk Management
 
-- **Risk per trade:** Auto-adjusts by balance: 1.0% (< $200), 1.5% ($200–$500), 2.0% ($500+)
+- **Risk per trade:** Fixed $10 per trade (backtests); live uses %-of-balance auto-adjust
+- **Max position:** Hard-capped at 0.5 lots in backtests; live capped at 10.0 lots
+- **Slippage model:** 1-2 pips on entry, 0-1 pip on exit (backtest only — live uses market fills)
 - **Max daily trades:** Auto-adjusts: 5 (< $200), 10 ($200–$500), 15 ($500+)
 - **Min balance:** $50 (bot refuses to start below this)
-- **Max SL:** 50 pips minimum (all trades); zone override picks tighter stop but final SL never less than 50 pips
 - **SL from bid/ask:** SL must be ≥ 5 pips from bid (buys) or ask (sells) — prevents wide-spread entries from placing SL directly at market
 - **Partial profit locking:** SL moves to breakeven after TP1 hit
 - **Trailing stop:** 0.3× SL distance, activates after TP1 (50-50) or TP2 (3-target); skips activation bar to avoid wick noise
-- **Spread filter:** Skips entry if spread > 30 pips (checked from the same tick used for SL placement)
+- **Spread filter:** Skips entry if spread > 20 points (backtest) or configured threshold (live)
 - **Circuit breaker:** Blocks entry after 3% daily loss / 4 consecutive losses / 15% drawdown
 - **News filter:** (Optional) blocks entry during high-impact USD events (ForexFactory)
 - **Commission:** $3.50 per lot per side (built into all calculations)

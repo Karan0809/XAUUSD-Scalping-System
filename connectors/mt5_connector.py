@@ -368,15 +368,20 @@ class MT5Connector:
         deals = mt5.history_deals_get(from_dt, to_dt)
         if deals is None or len(deals) == 0:
             return None
+        exit_deals = []
         for d in deals:
             if d.position_id == ticket and d.entry == 1:
-                return {
-                    "price": d.price,
-                    "profit": d.profit,
-                    "volume": d.volume,
-                    "time": datetime.fromtimestamp(d.time, tz=timezone.utc),
-                }
-        return None
+                exit_deals.append(d)
+        if not exit_deals:
+            return None
+        total_profit = sum(d.profit for d in exit_deals)
+        last = exit_deals[-1]
+        return {
+            "price": last.price,
+            "profit": total_profit,
+            "volume": sum(d.volume for d in exit_deals),
+            "time": datetime.fromtimestamp(last.time, tz=timezone.utc),
+        }
 
     def get_open_positions_count(self, symbol: str = "XAUUSD") -> int:
         return len(self.get_positions(symbol))

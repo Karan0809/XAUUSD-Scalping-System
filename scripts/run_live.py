@@ -184,8 +184,10 @@ class ScalperBot:
             pdiff = exit_price - pos["entry"]
             if not is_buy:
                 pdiff = -pdiff
-            comm = self.settings.backtest_commission * pos["original_lot_size"]
-            pos["pnl"] = round(pdiff * pos["original_lot_size"] * 100 - comm, 2)
+            remaining = pos.get("remaining_lots", pos["original_lot_size"])
+            comm = self.settings.backtest_commission * remaining
+            pnl_close = round(pdiff * remaining * 100 - comm, 2)
+            pos["pnl"] = round(pos.get("pnl", 0) + pnl_close, 2)
             pos["exit_reason"] = "sl"
             pos["close_time"] = current_time
             logger.info(

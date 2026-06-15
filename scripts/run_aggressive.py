@@ -143,6 +143,15 @@ class AggressiveBot:
                 })
             except Exception as e:
                 logger.error(f"Partial close {reason} failed: {e}")
+                try:
+                    positions = self.connector.get_positions(self.settings.symbol)
+                    still_open = any(p["ticket"] == ticket for p in positions)
+                except Exception:
+                    still_open = True
+                if still_open:
+                    return
+                pos["remaining_lots"] = 0.0
+                return
 
         pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
         pos["remaining_lots"] = round(pos["remaining_lots"] - lots, 2)
@@ -407,7 +416,7 @@ class AggressiveBot:
                                         "tp_hit_bar": 0,
                                         "trade_id": trade_id,
                                         "open_time": current_time,
-                                        "ticket": order.get("deal", order.get("order", 0)),
+                                        "ticket": order.get("order", 0),
                                     }
                                     self.mongo.save_trade({
                                         "trade_id": trade_id,

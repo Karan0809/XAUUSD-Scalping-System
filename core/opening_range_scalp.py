@@ -492,7 +492,7 @@ class OpeningRangeScalp:
                     tp = entry + range_width
                 else:
                     sl = self._range_high + 0.05
-                    sl = max(sl, entry + 0.50)
+                    sl = max(sl, entry + 1.00)
                     tp = entry - range_width
                 logger.info(
                     f"ORB range reversal {direction.upper()} at {entry:.2f} "
@@ -532,7 +532,7 @@ class OpeningRangeScalp:
             if best_zone is not None:
                 self._best_zone = best_zone
 
-        poi = self._find_poi(df_5min, df_5min.index[-1], breakout_dir)
+        poi = self._find_poi(df_5min, df_5min.index[breakout_idx], breakout_dir)
         if poi is None and best_zone is None:
             return None
 
@@ -713,8 +713,8 @@ class OpeningRangeScalp:
         if date_str != self._current_date:
             self.reset()
             self._current_date = date_str
-
-        if session is not None and session != self._current_session:
+            self._current_session = session
+        elif session is not None and session != self._current_session:
             self.reset()
             self._current_session = session
 
@@ -729,6 +729,7 @@ class OpeningRangeScalp:
 
         signal = self._run_free_trade(df_5min, df_15min, current_time)
         if signal is not None:
+            self._entry_triggered = True
             return signal
 
         return None
