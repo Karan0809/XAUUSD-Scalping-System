@@ -28,7 +28,7 @@ class ScalperSettings:
     max_daily_trades: int = 15
     max_slippage: int = 10
 
-    max_spread: float = 30.0
+    max_spread: float = 60.0
 
     trailing_stop_enabled: bool = True
     trail_multiplier: float = 0.3

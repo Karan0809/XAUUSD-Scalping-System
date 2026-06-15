@@ -141,6 +141,8 @@ class ScalperBot:
                     still_open = True
                 if still_open:
                     return
+                self._resolve_position_closed(current_time)
+                return
 
         pos["_last_price"] = price
         pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
@@ -156,9 +158,75 @@ class ScalperBot:
         )
         self.telegram.alert_partial(pos, reason, lots, price, profit, pos["pnl"])
 
+    def _resolve_position_closed(self, current_time: datetime) -> None:
+        pos = self._position
+        ticket = pos.get("ticket")
+        close_info = None
+        if ticket:
+            try:
+                close_info = self.connector.get_position_close_from_history(ticket)
+            except Exception:
+                pass
+        if close_info is not None:
+            pos["_last_price"] = close_info["price"]
+            pos["pnl"] = round(close_info["profit"], 2)
+            pos["exit_reason"] = "sl"
+            pos["close_time"] = close_info["time"]
+            logger.info(
+                f"Position {ticket} already closed by MT5 "
+                f"@ {close_info['price']:.2f} P=${close_info['profit']:.2f}"
+            )
+        else:
+            pos["_last_price"] = pos.get("_last_price") or pos.get("sl", pos["entry"])
+            pos["pnl"] = pos.get("pnl", 0.0)
+            pos["exit_reason"] = "sl"
+            pos["close_time"] = current_time
+            logger.info(
+                f"Position {ticket} no longer on MT5 (close info not found)"
+            )
+        pos["remaining_lots"] = 0.0
+        trade_logger.info(
+            f"CLOSE {pos['type'].upper()} {pos['entry']:.2f} {pos['close_time']} {pos['pnl']:.2f}",
+            extra={"trade": pos},
+        )
+        self.risk_mgr.record_trade(pos["pnl"])
+        acct = self.connector.get_account_info()
+        pos["balance"] = acct.get("balance", 0)
+        self.telegram.alert_trade_close(pos)
+        self.mongo.save_trade({
+            "trade_id": pos.get("trade_id", ""),
+            "symbol": self.settings.symbol,
+            "signal_type": pos["type"],
+            "entry_price": pos["entry"],
+            "stop_loss": pos.get("original_sl"),
+            "lot_size": pos["original_lot_size"],
+            "exit_price": pos.get("_last_price"),
+            "profit": pos["pnl"],
+            "exit_reason": pos["exit_reason"],
+            "close_time": pos["close_time"],
+            "session_date": pos["close_time"].strftime("%Y-%m-%d"),
+            "strategy": "orb_scalp",
+            "tp1_hit": pos.get("tp1_hit", False),
+            "tp2_hit": pos.get("tp2_hit", False),
+            "tp3_hit": pos.get("tp3_hit", False),
+        })
+        self.orb.reset_entry()
+        self._position = None
+
     def _manage_position(self, df: pd.DataFrame, i: int, current_time: datetime) -> bool:
         if self._position is None:
             return False
+
+        ticket = self._position.get("ticket")
+        if ticket:
+            try:
+                positions = self.connector.get_positions(self.settings.symbol)
+                still_open = any(p["ticket"] == ticket for p in positions)
+            except Exception:
+                still_open = True
+            if not still_open:
+                self._resolve_position_closed(current_time)
+                return True
 
         entry = self._position["entry"]
         sl_dist = abs(entry - self._position["original_sl"])
@@ -527,33 +595,17 @@ class ScalperBot:
                                 if signal["direction"] == "buy":
                                     entry_price = tick["ask"]
                                     new_sl = entry_price - sl_dist
-                                    min_sl = tick["bid"] - 0.01
+                                    min_sl = tick["bid"] - 0.05
                                     if new_sl > min_sl:
                                         new_sl = min_sl
                                     new_tp = entry_price + tp_dist
-                                    bid_dist = abs(new_sl - tick["bid"])
-                                    if bid_dist < 0.05:
-                                        logger.debug(f"SL too close to bid: {bid_dist:.2f} spread={spread_pips}")
-                                        time.sleep(10)
-                                        continue
                                 else:
                                     entry_price = tick["bid"]
                                     new_sl = entry_price + sl_dist
-                                    min_sl = tick["ask"] + 0.01
+                                    min_sl = tick["ask"] + 0.05
                                     if new_sl < min_sl:
                                         new_sl = min_sl
                                     new_tp = entry_price - tp_dist
-                                    ask_dist = abs(new_sl - tick["ask"])
-                                    if ask_dist < 0.05:
-                                        logger.debug(f"SL too close to ask: {ask_dist:.2f} spread={spread_pips}")
-                                        time.sleep(10)
-                                        continue
-
-                                actual_sl_dist = abs(entry_price - new_sl)
-                                if actual_sl_dist > sl_dist + 0.02:
-                                    logger.debug(f"SL clamped too wide: intended={sl_dist:.2f} actual={actual_sl_dist:.2f} spread={spread_pips}")
-                                    time.sleep(10)
-                                    continue
 
                                 try:
                                     order = self.connector.place_order(

@@ -581,7 +581,7 @@ class OpeningRangeScalp:
 
         # Ensure minimum SL distance for breathing room
         if sl is not None:
-            min_sl = 0.50
+            min_sl = 1.00
             if breakout_dir == "buy":
                 sl = min(sl, entry_price - min_sl)
             else:
@@ -641,7 +641,7 @@ class OpeningRangeScalp:
         sl = None
         setup = None
 
-        max_free_sl = 0.50
+        max_free_sl = 1.00
         if pullback is not None:
             entry_price = pullback["entry"]
             sl = pullback["sl"]

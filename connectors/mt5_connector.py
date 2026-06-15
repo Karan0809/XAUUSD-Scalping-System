@@ -232,7 +232,7 @@ class MT5Connector:
 
         order_type_str = "buy" if order_type == mt5.ORDER_TYPE_BUY else "sell"
         point = mt5.symbol_info(symbol).point
-        min_stop = max(point, 0.01)
+        min_stop = max(point, 0.05)
 
         if sl is not None:
             if order_type == mt5.ORDER_TYPE_BUY:
@@ -267,7 +267,7 @@ class MT5Connector:
             logger.error(f"Order send failed: {error}")
             raise MT5ConnectorError(f"Order send failed: {error}")
 
-        if result.retcode != mt5.TRADE_RETCODE_DONE:
+        if result.retcode not in (0, 1, 10008, 10009):
             logger.error(
                 f"Order rejected: retcode={result.retcode}, "
                 f"comment={result.comment}"
@@ -326,17 +326,16 @@ class MT5Connector:
         }
 
         result = mt5.order_send(request)
-        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-            error = mt5.last_error()
-            logger.error(f"Close position failed: {error}")
-            raise MT5ConnectorError(f"Close position failed: {error}")
-
-        logger.info(f"Position closed: {ticket} @ {price}")
-        return {
-            "order": result.order,
-            "deal": result.deal,
-            "price": result.price,
-        }
+        if result is not None and result.retcode in (0, 1, 10008, 10009):
+            logger.info(f"Position closed: {ticket} @ {price} retcode={result.retcode} deal={result.deal}")
+            return {
+                "order": result.order,
+                "deal": result.deal,
+                "price": result.price,
+            }
+        error = mt5.last_error()
+        logger.error(f"Close position failed: retcode={result.retcode if result is not None else 'None'}, error={error}")
+        raise MT5ConnectorError(f"Close position failed: retcode={result.retcode if result is not None else 'None'}, error={error}")
 
     def get_positions(self, symbol: str = "XAUUSD") -> List[Dict[str, Any]]:
         if not self._connected:
@@ -362,6 +361,22 @@ class MT5Connector:
             })
         return result
 
+    def get_position_close_from_history(self, ticket: int) -> Optional[Dict[str, Any]]:
+        from_dt = datetime.now(timezone.utc) - timedelta(days=1)
+        to_dt = datetime.now(timezone.utc)
+        deals = mt5.history_deals_get(from_dt, to_dt)
+        if deals is None:
+            return None
+        for d in deals:
+            if d.position_id == ticket and d.entry == 1:
+                return {
+                    "price": d.price,
+                    "profit": d.profit,
+                    "volume": d.volume,
+                    "time": datetime.fromtimestamp(d.time, tz=timezone.utc),
+                }
+        return None
+
     def get_open_positions_count(self, symbol: str = "XAUUSD") -> int:
         return len(self.get_positions(symbol))
 
@@ -382,9 +397,9 @@ class MT5Connector:
         }
 
         result = mt5.order_send(request)
-        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-            error = mt5.last_error()
-            logger.error(f"Modify position failed: {error}")
-            return False
-        logger.info(f"Position {ticket} modified: SL={sl}, TP={tp}")
-        return True
+        if result is not None and result.retcode in (0, 1, 10008, 10009):
+            logger.info(f"Position {ticket} modified: SL={sl}, TP={tp} retcode={result.retcode}")
+            return True
+        error = mt5.last_error()
+        logger.error(f"Modify position failed: retcode={result.retcode if result is not None else 'None'}, error={error}")
+        return False
