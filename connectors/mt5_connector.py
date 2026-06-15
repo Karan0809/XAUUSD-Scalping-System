@@ -362,10 +362,11 @@ class MT5Connector:
         return result
 
     def get_position_close_from_history(self, ticket: int) -> Optional[Dict[str, Any]]:
-        from_dt = datetime.now(timezone.utc) - timedelta(days=1)
+        from_dt = datetime.now(timezone.utc) - timedelta(days=7)
         to_dt = datetime.now(timezone.utc)
+        mt5.history_select(from_dt, to_dt)
         deals = mt5.history_deals_get(from_dt, to_dt)
-        if deals is None:
+        if deals is None or len(deals) == 0:
             return None
         for d in deals:
             if d.position_id == ticket and d.entry == 1:

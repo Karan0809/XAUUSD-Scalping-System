@@ -29,6 +29,7 @@ class ScalperSettings:
     max_slippage: int = 10
 
     max_spread: float = 60.0
+    max_slippage_points: float = 0.50
 
     trailing_stop_enabled: bool = True
     trail_multiplier: float = 0.3

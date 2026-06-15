@@ -60,6 +60,7 @@ class ScalperBot:
         self._last_heartbeat: float = 0
         self._start_time: datetime = datetime.now(timezone.utc)
         self._last_signal_time: Optional[datetime] = None
+        self._no_money_cooldown_until: float = 0
 
     def _load_15min_data(self) -> None:
         try:
@@ -177,12 +178,18 @@ class ScalperBot:
                 f"@ {close_info['price']:.2f} P=${close_info['profit']:.2f}"
             )
         else:
-            pos["_last_price"] = pos.get("_last_price") or pos.get("sl", pos["entry"])
-            pos["pnl"] = pos.get("pnl", 0.0)
+            exit_price = pos.get("_last_price") or pos.get("sl", pos["entry"])
+            pos["_last_price"] = exit_price
+            is_buy = pos["type"] == "buy"
+            pdiff = exit_price - pos["entry"]
+            if not is_buy:
+                pdiff = -pdiff
+            comm = self.settings.backtest_commission * pos["original_lot_size"]
+            pos["pnl"] = round(pdiff * pos["original_lot_size"] * 100 - comm, 2)
             pos["exit_reason"] = "sl"
             pos["close_time"] = current_time
             logger.info(
-                f"Position {ticket} no longer on MT5 (close info not found)"
+                f"Position {ticket} no longer on MT5 (computed P&L=${pos['pnl']:.2f})"
             )
         pos["remaining_lots"] = 0.0
         trade_logger.info(
@@ -561,6 +568,11 @@ class ScalperBot:
                                 time.sleep(60)
                                 continue
 
+                        # No-money cooldown — stop spamming retcode=10019
+                        if time.time() < self._no_money_cooldown_until:
+                            time.sleep(10)
+                            continue
+
                         # Circuit breaker
                         acct = self.connector.get_account_info()
                         allowed, cb_reason = self.risk_mgr.check_entry_allowed(acct["balance"])
@@ -586,6 +598,18 @@ class ScalperBot:
                                 spread_pips = tick["spread"]
                                 if spread_pips > self.settings.max_spread:
                                     logger.debug(f"Spread too high: {spread_pips} > {self.settings.max_spread}")
+                                    time.sleep(10)
+                                    continue
+
+                                # Slippage guard — skip if current price is too far from signal entry
+                                current_market = tick["ask"] if signal["direction"] == "buy" else tick["bid"]
+                                slippage = abs(current_market - signal["entry"])
+                                if slippage > self.settings.max_slippage_points:
+                                    logger.info(
+                                        f"Skipping {signal['direction']}: slippage {slippage:.2f} "
+                                        f"> max {self.settings.max_slippage_points:.2f} "
+                                        f"(signal={signal['entry']:.2f} market={current_market:.2f})"
+                                    )
                                     time.sleep(10)
                                     continue
 
@@ -653,7 +677,7 @@ class ScalperBot:
                                         "trail_activation_bar": 0,
                                         "trade_id": trade_id,
                                         "open_time": current_time,
-                                        "ticket": order.get("deal", order.get("order", 0)),
+                                        "ticket": order.get("order", 0),
                                     }
                                     self.mongo.save_trade({
                                         "trade_id": trade_id,
@@ -683,6 +707,8 @@ class ScalperBot:
                                     self.telegram.alert_trade_open(self._position)
                                 except MT5ConnectorError as e:
                                     logger.error(f"Order failed: {e}")
+                                    if "No money" in str(e) or "10019" in str(e):
+                                        self._no_money_cooldown_until = time.time() + 300
                                     self.telegram.alert_error(f"Order failed: {e}")
 
                 if time.time() - self._last_heartbeat > self.HEARTBEAT_SECONDS:
