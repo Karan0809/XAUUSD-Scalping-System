@@ -491,6 +491,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Aggressive M1 Scalper Live Bot")
     parser.add_argument("--env", type=str, default=".env", help="Env file to load (default: .env)")
     args = parser.parse_args()
+    PROJ_ROOT = Path(__file__).resolve().parent.parent
+    env_path = str(PROJ_ROOT / args.env)
     setup_logging()
-    bot = AggressiveBot(env_file=args.env)
+    bot = AggressiveBot(env_file=env_path)
     bot.run()

@@ -333,6 +333,20 @@ class MT5Connector:
                 "deal": result.deal,
                 "price": result.price,
             }
+
+        # IOC may not be supported for closes; retry without type_filling
+        if result and result.retcode == 10013 and request.get("type_filling") is not None:
+            logger.warning(f"IOC close rejected ({result.retcode}), retrying without type_filling")
+            request.pop("type_filling")
+            result = mt5.order_send(request)
+            if result is not None and result.retcode in (0, 1, 10008, 10009):
+                logger.info(f"Position closed (no filling mode): {ticket} @ {price} deal={result.deal}")
+                return {
+                    "order": result.order,
+                    "deal": result.deal,
+                    "price": result.price,
+                }
+
         error = mt5.last_error()
         logger.error(f"Close position failed: retcode={result.retcode if result is not None else 'None'}, error={error}")
         raise MT5ConnectorError(f"Close position failed: retcode={result.retcode if result is not None else 'None'}, error={error}")

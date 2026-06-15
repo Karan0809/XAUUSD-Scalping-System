@@ -757,6 +757,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ORB Scalper Live Bot")
     parser.add_argument("--env", type=str, default=".env", help="Env file to load (default: .env)")
     args = parser.parse_args()
+    PROJ_ROOT = Path(__file__).resolve().parent.parent
+    env_path = str(PROJ_ROOT / args.env)
     setup_logging()
-    bot = ScalperBot(env_file=args.env)
+    bot = ScalperBot(env_file=env_path)
     bot.run()
