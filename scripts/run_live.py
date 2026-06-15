@@ -61,6 +61,7 @@ class ScalperBot:
         self._start_time: datetime = datetime.now(timezone.utc)
         self._last_signal_time: Optional[datetime] = None
         self._no_money_cooldown_until: float = 0
+        self._initial_balance: Optional[float] = None
 
     def _load_15min_data(self) -> None:
         try:
@@ -99,11 +100,25 @@ class ScalperBot:
             self.risk_mgr.start_day(today, acct["balance"])
             logger.info(f"New trading day: {today}")
 
+    def _get_risk_amount(self, balance: float) -> float:
+        if self._initial_balance is None:
+            return 10.0
+        profit = balance - self._initial_balance
+        if profit >= 50000:
+            return 50.0
+        elif profit >= 10000:
+            return 30.0
+        elif profit >= 2000:
+            return 20.0
+        elif profit >= 500:
+            return 15.0
+        return 10.0
+
     def _calc_lot_size(self, entry: float, sl: float, balance: float) -> float:
         dist = abs(entry - sl)
         if dist <= 0:
             return 0.01
-        risk_amount = balance * (self.settings.risk_percent / 100.0)
+        risk_amount = self._get_risk_amount(balance)
         gold_oz_per_lot = 100.0
         risk_lots = round(risk_amount / (dist * gold_oz_per_lot), 2)
 
@@ -388,6 +403,7 @@ class ScalperBot:
 
         account = self.connector.get_account_info()
         logger.info(f"Account: {account['login']}, Balance: ${account['balance']:.2f}")
+        self._initial_balance = account["balance"]
 
         try:
             self.settings = self.settings.adjust_for_balance(account["balance"])

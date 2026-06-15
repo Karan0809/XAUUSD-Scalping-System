@@ -156,11 +156,23 @@ def get_session(hour: int) -> Optional[str]:
     return None
 
 
-def calc_lot_size(balance: float, entry: float, sl: float, risk_pct: float, margin_rate: Optional[float] = None) -> float:
+def get_risk_amount(profit: float) -> float:
+    if profit >= 50000:
+        return 50.0
+    elif profit >= 10000:
+        return 30.0
+    elif profit >= 2000:
+        return 20.0
+    elif profit >= 500:
+        return 15.0
+    return 10.0
+
+
+def calc_lot_size(balance: float, entry: float, sl: float, risk_pct: float, margin_rate: Optional[float] = None, profit: float = 0.0) -> float:
     dist = abs(entry - sl)
     if dist <= 0:
         return 0.01
-    risk_amount = 10.0
+    risk_amount = get_risk_amount(profit)
     risk_lots = round(risk_amount / (dist * 100), 2)
     if margin_rate is not None and margin_rate > 0:
         margin_lots = max(0.01, round((balance * 0.9) / margin_rate, 2))
@@ -399,7 +411,7 @@ def main():
                 else:
                     entry_price -= random.uniform(0.01, 0.02)
                 sl = signal["sl"]
-                lot_size = calc_lot_size(balance, entry_price, sl, settings.risk_percent, margin_rate)
+                lot_size = calc_lot_size(balance, entry_price, sl, settings.risk_percent, margin_rate, profit=balance - args.balance)
 
                 if lot_size >= 0.01:
                     last_entry_bar = i

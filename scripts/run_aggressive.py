@@ -58,6 +58,7 @@ class AggressiveBot:
         self._m15_last_refresh: float = 0
         self._last_heartbeat: float = 0
         self._start_time: datetime = datetime.now(timezone.utc)
+        self._initial_balance: Optional[float] = None
 
     def _load_15min_data(self) -> None:
         try:
@@ -95,8 +96,22 @@ class AggressiveBot:
             self.risk_mgr.start_day(today, acct["balance"])
             logger.info(f"New trading day: {today}")
 
+    def _get_risk_amount(self, balance: float) -> float:
+        if self._initial_balance is None:
+            return 10.0
+        profit = balance - self._initial_balance
+        if profit >= 50000:
+            return 50.0
+        elif profit >= 10000:
+            return 30.0
+        elif profit >= 2000:
+            return 20.0
+        elif profit >= 500:
+            return 15.0
+        return 10.0
+
     def _calc_lot_size(self, balance: float) -> float:
-        risk_amount = balance * (RISK_PCT / 100.0)
+        risk_amount = self._get_risk_amount(balance)
         return max(0.01, min(round(risk_amount / (SL_PRICE * 100), 2), 10.0))
 
     def _is_within_zone(self, price: float):
@@ -265,6 +280,7 @@ class AggressiveBot:
 
         account = self.connector.get_account_info()
         logger.info(f"Account: {account['login']}, Balance: ${account['balance']:.2f}")
+        self._initial_balance = account["balance"]
 
         self.telegram._send(
             f"\U0001f916 <b>Aggressive M1 Scalper Bot Started</b>\n"

@@ -142,9 +142,21 @@ def load_15min_data(start: datetime, end: datetime) -> pd.DataFrame:
         sys.exit(1)
 
 
-def calc_lot_size(balance: float, risk_pct: float, sl_pips: float, margin_rate: Optional[float] = None) -> float:
+def get_risk_amount(profit: float) -> float:
+    if profit >= 50000:
+        return 50.0
+    elif profit >= 10000:
+        return 30.0
+    elif profit >= 2000:
+        return 20.0
+    elif profit >= 500:
+        return 15.0
+    return 10.0
+
+
+def calc_lot_size(balance: float, risk_pct: float, sl_pips: float, margin_rate: Optional[float] = None, profit: float = 0.0) -> float:
     sl_price = sl_pips / 100.0
-    risk_amount = 10.0
+    risk_amount = get_risk_amount(profit)
     risk_lots = round(risk_amount / (sl_price * 100), 2)
     if margin_rate is not None and margin_rate > 0:
         margin_lots = max(0.01, round((balance * 0.9) / margin_rate, 2))
@@ -391,7 +403,7 @@ def main():
                 entry_price += random.uniform(0.01, 0.02)
             else:
                 entry_price -= random.uniform(0.01, 0.02)
-            lot_size = calc_lot_size(balance, risk_pct, sl_pips, margin_rate)
+            lot_size = calc_lot_size(balance, risk_pct, sl_pips, margin_rate, profit=balance - args.balance)
             if lot_size < 0.01:
                 continue
 

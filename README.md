@@ -28,7 +28,7 @@ When no ORB range is available (outside session hours, or before the opening can
 | **Entry method** | Pullback into zone or FVG anywhere |
 | **Validation** | Slow momentum, fib 0.5–0.618 discount, M5 reaction |
 
-Both ORB and free trade share the same fixed $10 risk per trade, same partial-profit exit model (30/40/30 + trailing), and same daily trade limit. Position sizes are fixed (not compounding) with a hard cap of 0.5 lots and 1-2 pip slippage applied on entry for realistic fills.
+Both ORB and free trade share the same tiered fixed risk per trade, same partial-profit exit model (30/40/30 + trailing), and same daily trade limit. Position sizes use tiered fixed risk (not compounding) with a hard cap of 0.5 lots and 1-2 pip slippage applied on entry for realistic fills.
 
 ### Entry Filters
 
@@ -132,21 +132,21 @@ On every poll, the bot re-examines all M5 bars since entry (up to 30 bars back).
 
 ## Backtest Results (Sep 2025 – Jun 2026)
 
-Backtested on live M5/M1 XAUUSD data across all sessions (Asia + London + NY). Commission: $3.50/lot/side. All tests use fixed $10 risk per trade, 0.5 lots hard cap, 1-2 pip entry slippage, 0-1 pip exit slippage, and a 20-point spread filter.
+Backtested on live M5/M1 XAUUSD data across all sessions (Asia + London + NY). Commission: $3.50/lot/side. All tests use tiered fixed risk ($10→$15→$20→$30→$50 based on profit milestones), 0.5 lots hard cap, 1-2 pip entry slippage, 0-1 pip exit slippage, and a 20-point spread filter.
 
 ### ORB Scalper
 
-Trades all sessions using ORB pipeline (breakout pullback, aggressive FVG, range reversal) with free trade fallback. Each session allows at most 1 entry. Lot size determined by fixed $10 risk / SL distance, capped at 0.5 lots.
+Trades all sessions using ORB pipeline (breakout pullback, aggressive FVG, range reversal) with free trade fallback. Each session allows at most 1 entry. Lot size determined by tiered fixed risk / SL distance, capped at 0.5 lots.
 
 | Metric | $1,000 Account |
 |---|---|
 | **Total Trades** | 518 |
 | **Win Rate** | 95.0% |
-| **Total Profit** | **$24,889** |
-| **Profit Factor** | 81.15 |
-| **Max Drawdown** | $10.56 (0.79%) |
-| **Avg Win / Loss** | +$51.20 / -$11.54 |
-| **Largest Win / Loss** | +$496.54 / -$24.03 |
+| **Total Profit** | **$82,485** |
+| **Profit Factor** | 102.81 |
+| **Max Drawdown** | $15.78 (1.01%) |
+| **Avg Win / Loss** | +$169.24 / -$29.97 |
+| **Largest Win / Loss** | +$1,648.69 / -$52.05 |
 | **Avg Bars Held** | 2.0 |
 | **Filters** | Spread=442 CB=0 |
 
@@ -158,11 +158,11 @@ Trades 24/7 on zone+momentum confluence with fixed 20-pip SL. No session awarene
 |---|---|
 | **Total Trades** | 1,455 |
 | **Win Rate** | 77.7% |
-| **Total Profit** | **$68,246** |
-| **Profit Factor** | 18.68 |
-| **Max Drawdown** | $15.05 (1.45%) |
-| **Avg Win / Loss** | +$63.75 / -$11.91 |
-| **Largest Win / Loss** | +$712.62 / -$12.25 |
+| **Total Profit** | **$68,244** |
+| **Profit Factor** | 18.70 |
+| **Max Drawdown** | $15.14 (1.46%) |
+| **Avg Win / Loss** | +$63.75 / -$11.90 |
+| **Largest Win / Loss** | +$712.94 / -$12.25 |
 | **Avg Bars Held** | 1.4 |
 | **Filters** | Zone=0 Mom=1,591 Spread=425 CB=5,123 |
 
@@ -170,7 +170,7 @@ Trades 24/7 on zone+momentum confluence with fixed 20-pip SL. No session awarene
 
 | Fix | Impact |
 |---|---|
-| **Fixed $10 risk** (was 2% of balance) | Killed compounding explosion. Profits stay proportional. |
+| **Tiered fixed risk** ($10→$15→$20→$30→$50 based on profit) | Replaces flat $10 — grows with account without compounding explosion. |
 | **0.5 lots hard cap** (was 10.0) | Limits position size regardless of account growth. |
 | **Slippage model** (1-2 pip entry, 0-1 pip exit) | More realistic fills, prevents edge-case overperformance. |
 | **`elif` in session/date reset** | Stopped double-reset bug that cleared `_entry_triggered`, causing duplicate entries. |
@@ -240,7 +240,7 @@ Fill in `.env` with your credentials:
 
 | Setting | Default | Description |
 |---|---|---|
-| `risk_percent` | 2.0 | Risk per trade (% of balance) — backtests override with fixed $10 |
+| `risk_percent` | 2.0 | Risk per trade (% of balance) — backtests use tiered fixed risk |
 | `max_daily_trades` | 15 | Max trades per day |
 | `max_spread` | 20.0 | Max spread in points before skipping entry |
 | `trail_multiplier` | 0.3 | Trailing stop distance = multiplier × SL distance |
@@ -283,14 +283,14 @@ python scripts/backtest.py --start 2025-09-01 --end 2026-06-15 --balance 1000
 python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-15 --balance 1000
 ```
 
-Both backtests use fixed $10 risk, 0.5 max lots, slippage model, and 20-point spread filter. Results are saved as JSON with `--output`.
+Both backtests use tiered fixed risk, 0.5 max lots, slippage model, and 20-point spread filter. Results are saved as JSON with `--output`.
 
-- `--risk <pct>` — risk percent (overridden by fixed $10 in current version)
+- `--risk <pct>` — risk percent (backtests use tiered fixed risk regardless)
 - `--output <file>` — save results as JSON
 
 ## Risk Management
 
-- **Risk per trade:** Fixed $10 per trade (backtests); live uses %-of-balance auto-adjust
+- **Risk per trade:** Tiered fixed risk per trade — $10 (profit <$500), $15 ($500+), $20 ($2,000+), $30 ($10,000+), $50 ($50,000+). Live uses %-of-balance auto-adjust.
 - **Max position:** Hard-capped at 0.5 lots in backtests; live capped at 10.0 lots
 - **Slippage model:** 1-2 pips on entry, 0-1 pip on exit (backtest only — live uses market fills)
 - **Max daily trades:** Auto-adjusts: 5 (< $200), 10 ($200–$500), 15 ($500+)
