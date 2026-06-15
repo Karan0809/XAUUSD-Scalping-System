@@ -280,6 +280,17 @@ class AggressiveBot:
         if self.news_filter is not None:
             self.news_filter.fetch_events()
 
+        # Re-verify account — M15 data loading can cause MT5 to revert account
+        if self.settings.mt5_login and self.settings.mt5_password:
+            info = mt5.account_info()
+            if info is not None and info.login != self.settings.mt5_login:
+                logger.warning(f"Account reverted to {info.login}, re-logging as {self.settings.mt5_login}")
+                mt5.login(
+                    login=self.settings.mt5_login,
+                    password=self.settings.mt5_password,
+                    server=self.settings.mt5_server if self.settings.mt5_server else None,
+                )
+
         account = self.connector.get_account_info()
         logger.info(f"Account: {account['login']}, Balance: ${account['balance']:.2f}")
         self._initial_balance = account["balance"]
