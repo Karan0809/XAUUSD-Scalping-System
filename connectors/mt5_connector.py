@@ -1,6 +1,6 @@
 import os
+import subprocess
 import time
-import ctypes
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Tuple
@@ -76,31 +76,21 @@ class MT5Connector:
         if term is not None and term.trade_allowed:
             return
 
-        logger.warning("AutoTrading disabled, attempting to enable...")
+        logger.warning("AutoTrading disabled, attempting to enable via PowerShell...")
         try:
-            user32 = ctypes.windll.user32
-            # Find MT5 terminal window by class name
-            hwnd = user32.FindWindowW("MetaQuotes::MetaTrader::5.00", None)
-            if hwnd:
-                # Alt+T toggles AutoTrading
-                user32.SendMessageW(hwnd, 0x0111, 0x40EC, 0)  # WM_COMMAND, ID_TOGGLE_AUTO_TRADING
-                time.sleep(2)
-                term = mt5.terminal_info()
-                if term is not None and term.trade_allowed:
-                    logger.info("AutoTrading enabled successfully")
-                else:
-                    # Fallback: send Alt+T via keybd_event
-                    user32.keybd_event(0x12, 0, 0, 0)      # Alt down
-                    user32.keybd_event(0x54, 0, 0, 0)      # T down
-                    time.sleep(0.1)
-                    user32.keybd_event(0x54, 0, 2, 0)      # T up
-                    user32.keybd_event(0x12, 0, 2, 0)      # Alt up
-                    time.sleep(2)
-                    term = mt5.terminal_info()
-                    if term is not None and term.trade_allowed:
-                        logger.info("AutoTrading enabled via Alt+T")
+            subprocess.run([
+                "powershell",
+                "-Command",
+                "$w = New-Object -ComObject wscript.shell; "
+                "try { $w.AppActivate((Get-Process terminal64 | Where-Object { $_.MainWindowTitle -match 'MetaTrader' } | Select-Object -First 1).MainWindowTitle); "
+                "Start-Sleep -Milliseconds 800; $w.SendKeys('%t'); Start-Sleep -Seconds 2 } catch {}"
+            ], capture_output=True, timeout=10)
+            time.sleep(2)
+            term = mt5.terminal_info()
+            if term is not None and term.trade_allowed:
+                logger.info("AutoTrading enabled successfully")
             else:
-                logger.warning("Could not find MT5 terminal window")
+                logger.warning("PowerShell SendKeys did not enable AutoTrading")
         except Exception as e:
             logger.error(f"Failed to enable AutoTrading: {e}")
 

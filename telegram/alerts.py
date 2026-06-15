@@ -138,7 +138,7 @@ class TelegramNotifier:
         direction = trade.get("type", "").lower()
         entry = trade.get("entry", 0)
         sl = trade.get("sl", 0)
-        lot = trade.get("lot_size", 0)
+        lot = trade.get("lot_size") or trade.get("original_lot_size", 0)
         sl_dist = abs(entry - sl)
         risk_amt = sl_dist * lot * 100
         comm = round(self.settings.backtest_commission * lot, 2)
