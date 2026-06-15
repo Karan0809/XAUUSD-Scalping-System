@@ -759,6 +759,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     PROJ_ROOT = Path(__file__).resolve().parent.parent
     env_path = str(PROJ_ROOT / args.env)
-    setup_logging()
     bot = ScalperBot(env_file=env_path)
+    setup_logging()
     bot.run()

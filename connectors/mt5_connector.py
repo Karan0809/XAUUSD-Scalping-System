@@ -1,5 +1,6 @@
 import os
 import time
+import ctypes
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Tuple
@@ -27,21 +28,30 @@ class MT5Connector:
         if self._connected:
             return True
 
+        # Initialize terminal connection (any account)
         init = mt5.initialize(path=self.settings.mt5_path, timeout=30000)
         if not init:
             init = mt5.initialize()
         if not init:
-            init = mt5.initialize(
-                path=self.settings.mt5_path,
-                login=self.settings.mt5_login,
-                password=self.settings.mt5_password,
-                server=self.settings.mt5_server,
-                timeout=30000,
-            )
-        if not init:
             error = mt5.last_error()
             logger.error(f"MT5 initialize failed: {error}")
             raise MT5ConnectorError(f"MT5 initialize failed: {error}")
+
+        # Explicitly login with env-file credentials if provided
+        if self.settings.mt5_login and self.settings.mt5_password:
+            logged_in = mt5.login(
+                login=self.settings.mt5_login,
+                password=self.settings.mt5_password,
+                server=self.settings.mt5_server if self.settings.mt5_server else None,
+            )
+            if not logged_in:
+                error = mt5.last_error()
+                raise MT5ConnectorError(
+                    f"MT5 login failed for {self.settings.mt5_login}: {error}"
+                )
+            logger.info(f"Logged into account {self.settings.mt5_login}")
+
+        self._ensure_auto_trading_enabled()
 
         self._connected = True
         info = mt5.account_info()
@@ -59,6 +69,40 @@ class MT5Connector:
                 f"Balance: {info.balance:.2f} {info.currency}"
             )
         return True
+
+    @staticmethod
+    def _ensure_auto_trading_enabled() -> None:
+        term = mt5.terminal_info()
+        if term is not None and term.trade_allowed:
+            return
+
+        logger.warning("AutoTrading disabled, attempting to enable...")
+        try:
+            user32 = ctypes.windll.user32
+            # Find MT5 terminal window by class name
+            hwnd = user32.FindWindowW("MetaQuotes::MetaTrader::5.00", None)
+            if hwnd:
+                # Alt+T toggles AutoTrading
+                user32.SendMessageW(hwnd, 0x0111, 0x40EC, 0)  # WM_COMMAND, ID_TOGGLE_AUTO_TRADING
+                time.sleep(2)
+                term = mt5.terminal_info()
+                if term is not None and term.trade_allowed:
+                    logger.info("AutoTrading enabled successfully")
+                else:
+                    # Fallback: send Alt+T via keybd_event
+                    user32.keybd_event(0x12, 0, 0, 0)      # Alt down
+                    user32.keybd_event(0x54, 0, 0, 0)      # T down
+                    time.sleep(0.1)
+                    user32.keybd_event(0x54, 0, 2, 0)      # T up
+                    user32.keybd_event(0x12, 0, 2, 0)      # Alt up
+                    time.sleep(2)
+                    term = mt5.terminal_info()
+                    if term is not None and term.trade_allowed:
+                        logger.info("AutoTrading enabled via Alt+T")
+            else:
+                logger.warning("Could not find MT5 terminal window")
+        except Exception as e:
+            logger.error(f"Failed to enable AutoTrading: {e}")
 
     def disconnect(self) -> None:
         if self._connected:
@@ -346,6 +390,26 @@ class MT5Connector:
                     "deal": result.deal,
                     "price": result.price,
                 }
+
+        # Stored ticket may be stale — find actual position ticket from MT5
+        if result and result.retcode == 10013:
+            positions = mt5.positions_get(symbol=symbol)
+            if positions:
+                for p in positions:
+                    if p.comment == request.get("comment", "") or True:
+                        actual_ticket = p.ticket
+                        if actual_ticket != ticket:
+                            logger.warning(f"Retrying close with actual ticket {actual_ticket} (stored was {ticket})")
+                            request["position"] = actual_ticket
+                            result = mt5.order_send(request)
+                            if result is not None and result.retcode in (0, 1, 10008, 10009):
+                                logger.info(f"Position closed via actual ticket: {actual_ticket} @ {price} deal={result.deal}")
+                                return {
+                                    "order": result.order,
+                                    "deal": result.deal,
+                                    "price": result.price,
+                                }
+                        break  # try first open position for this symbol
 
         error = mt5.last_error()
         logger.error(f"Close position failed: retcode={result.retcode if result is not None else 'None'}, error={error}")

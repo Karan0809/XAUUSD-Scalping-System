@@ -180,6 +180,12 @@ Trades 24/7 on zone+momentum confluence with fixed 20-pip SL. No session awarene
 | **3-bar minimum gap** | Safety net preventing re-entry within same session after a close. |
 | **Recovery entries** (ORB only) | After a loss, next entry tightens SL using M5 swing level — same risk, larger size. +$781 gain. |
 | **Spread filter 20 points** (was 60) | Blocks wider spreads — safer for tight 1-pip SL scalping. |
+| **Multi-env with `--env` CLI flag** | Run both bots simultaneously on separate MT5 accounts via `.env.orb` / `.env.aggressive`. |
+| **Lazy env loading in settings.py** | `field(default_factory=...)` evaluates env vars after `load_dotenv()`, preventing stale values. |
+| **Settings cache order** | `setup_logging()` moved after bot init so the correct env file sets the global cache first. |
+| **`mt5.login()` after `initialize()`** | Explicitly logs into the account from the env file instead of reusing the terminal's cached session. |
+| **Close retcode=10013 fix** | Retries close without `type_filling` if IOC rejected; falls back to finding actual position ticket from MT5 if stored ticket is stale. |
+| **AutoTrading auto-enable** | Sends Alt+T keystroke via Win32 API if `terminal_info().trade_allowed` is False after connect. |
 
 ## Project Structure
 
@@ -239,6 +245,7 @@ Create `.env` (or `.env.orb` / `.env.aggressive` for separate accounts):
 | `MT5_PASSWORD` | MT5 account password |
 | `MT5_SERVER` | Broker server (e.g. `ICMarkets-Demo`, `MetaQuotes-Demo`) |
 | `MT5_PATH` | Path to terminal64.exe |
+| `MT5_PORTABLE` | Set `true` to run terminal in portable mode (stores data locally, not in AppData) — required for separate copies of MT5 |
 | `MONGO_URI` | MongoDB connection string |
 | `TELEGRAM_TOKEN` | Telegram bot token |
 | `TELEGRAM_CHAT_ID` | Telegram chat ID (comma-separated for multiple) |
@@ -254,7 +261,13 @@ python scripts/run_live.py --env .env.orb
 
 # Aggressive bot on a different account
 python scripts/run_aggressive.py --env .env.aggressive
+
+# Run both simultaneously (separate terminal windows)
+start powershell python scripts/run_live.py --env .env.orb
+start powershell python scripts/run_aggressive.py --env .env.aggressive
 ```
+
+The `--env` path resolves relative to the project root (not the working directory). Each bot connects to its own MT5 terminal via `mt5.login()` after initialization — no shared sessions between bots.
 
 ### Key Settings (`config/settings.py`)
 
@@ -350,7 +363,10 @@ All trade alerts are tagged `[ORB]` or `[FREE]` so you can distinguish session-b
 - **Trail activation bar skip.** The trailing stop check skips the bar where it was just activated, preventing wick noise from stopping out the runner. Trail level is ratcheted on subsequent bars.
 - **Spread computed live** as `(ask − bid) / point` since `tick.spread` is unavailable on some MT5 builds.
 - **Same-tick SL placement.** Spread check, entry price, and SL calculation all use the same `get_tick()` call. This prevents the bug where a separate earlier tick passes the spread filter but the actual entry tick has wider spread, causing SL to land 1 pip from bid.
-- **Partial close failure guard.** MT5 close is attempted before state is updated. If the close fails (network blip, position already gone), `remaining_lots` is unchanged and the next poll retries.
+- **Partial close failure guard.** MT5 close is attempted before state is updated. If the close fails, the connector retries without `type_filling` (IOC may be unsupported for closes), then falls back to finding the actual position ticket from MT5 if the stored ticket is stale.
 - **Orphan position recovery.** On startup, the bot scans for existing MT5 positions. If found, they're adopted into local management — no orphaned trades run unmanaged and no duplicate opens on top of them.
+- **Multi-account isolation.** Each bot uses `mt5.login()` after `initialize()` to explicitly connect to its env-file account, ignoring the terminal's cached session. Separate MT5 copies with `MT5_PORTABLE=true` ensure independent data folders.
+- **AutoTrading auto-enable.** After login, the connector checks `terminal_info().trade_allowed` and sends Alt+T via the Win32 API if disabled — no more manual toggling on restarts.
+- **Settings cache ordering.** `setup_logging()` calls `get_settings()` which caches globally. Bot `__init__` must run first so the correct env file populates the cache; `setup_logging()` then reads the cached settings. Both `run_live.py` and `run_aggressive.py` follow this order.
 - **Logs are line-buffered** (`reconfigure(line_buffering=True)`) for real-time terminal output.
 - **No external dependencies beyond MT5, pandas, numpy, pymongo, python-dotenv, requests, pydantic, python-json-logger.**

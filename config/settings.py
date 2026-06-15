@@ -15,6 +15,7 @@ class ScalperSettings:
     mt5_login: int = field(default_factory=lambda: int(_env("MT5_LOGIN", "0")))
     mt5_password: str = field(default_factory=lambda: _env("MT5_PASSWORD", ""))
     mt5_path: str = field(default_factory=lambda: _env("MT5_PATH", r"C:\Program Files\MetaTrader 5\terminal64.exe"))
+    mt5_portable: bool = field(default_factory=lambda: _env("MT5_PORTABLE", "false").lower() in ("1", "true", "yes"))
 
     asia_start_hour: int = 0
     asia_end_hour: int = 9
