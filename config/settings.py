@@ -71,9 +71,16 @@ class ScalperSettings:
         if balance < 200:
             s.risk_percent = min(s.risk_percent, 1.0)
             s.max_daily_trades = min(s.max_daily_trades, 5)
+            s.circuit_breaker_max_daily_loss_pct = 20.0
+            s.circuit_breaker_max_drawdown_pct = 50.0
         elif balance < 500:
             s.risk_percent = min(s.risk_percent, 1.5)
             s.max_daily_trades = min(s.max_daily_trades, 10)
+            s.circuit_breaker_max_daily_loss_pct = 10.0
+            s.circuit_breaker_max_drawdown_pct = 30.0
+        elif balance < 1000:
+            s.circuit_breaker_max_daily_loss_pct = 5.0
+            s.circuit_breaker_max_drawdown_pct = 20.0
         return s
 
     def validate(self) -> bool:
