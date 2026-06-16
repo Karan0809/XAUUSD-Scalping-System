@@ -91,6 +91,13 @@ class TelegramNotifier:
         else:
             return "Single Target"
 
+    def _trade_tag(self, trade: Dict[str, Any]) -> str:
+        tag_override = trade.get("tag")
+        if tag_override:
+            return tag_override
+        setup = trade.get("setup", "")
+        return "FREE" if setup.startswith("free_") else "ORB"
+
     def _setup_label(self, setup: str) -> str:
         labels = {
             "breakout_pullback": "ORB Breakout Pullback",
@@ -148,9 +155,9 @@ class TelegramNotifier:
         tp = trade.get("tp", 0)
         setup = trade.get("setup", "")
         label = self._setup_label(setup)
+        tag = self._trade_tag(trade)
         is_free = self._is_free_setup(setup)
-        tag = "FREE" if is_free else "ORB"
-        session_info = f" | {trade.get('session', '').upper()}" if not is_free else ""
+        session_info = f" | {trade.get('session', '').upper()}" if tag == "ORB" and not is_free else ""
 
         tp1 = trade.get("tp1_lots", 0)
         tp2 = trade.get("tp2_lots", 0)
@@ -164,7 +171,8 @@ class TelegramNotifier:
             pairs = [f"TP1 1:1 {tp1:.2f}"]
         targets = " | ".join(pairs)
         msg = (
-            f"\U0001f4b0 <b>OPEN [{tag}]</b>\n"
+            f"\U0001f4b0 <b>OPEN [{tag}]</b>"
+            f"\n"
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
             f"{self._dir_emoji(direction)} {direction.upper()} {self._dir_arrow(direction)}{session_info}\n"
             f"Lot: {lot:.2f} | {model}\n"
@@ -188,9 +196,9 @@ class TelegramNotifier:
         balance = trade.get("balance", 0)
         setup = trade.get("setup", "")
         label = self._setup_label(setup)
+        tag = self._trade_tag(trade)
         is_free = self._is_free_setup(setup)
-        tag = "FREE" if is_free else "ORB"
-        session_info = f" | {trade.get('session', '').upper()}" if not is_free else ""
+        session_info = f" | {trade.get('session', '').upper()}" if tag == "ORB" and not is_free else ""
 
         open_time = trade.get("open_time")
         close_time = trade.get("close_time")
@@ -236,8 +244,7 @@ class TelegramNotifier:
         entry = trade.get("entry", 0)
         setup = trade.get("setup", "")
         label = self._setup_label(setup)
-        is_free = self._is_free_setup(setup)
-        tag = "FREE" if is_free else "ORB"
+        tag = self._trade_tag(trade)
 
         emoji = "\U0001f7e2" if profit >= 0 else "\U0001f534"
         reason_upper = reason.upper()

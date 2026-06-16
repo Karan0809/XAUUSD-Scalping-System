@@ -167,7 +167,12 @@ class AggressiveBot:
                     still_open = True
                 if still_open:
                     return
-                pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
+                actual = self.connector.get_position_close_from_history(ticket)
+                if actual:
+                    logger.info(f"Actual close P&L from history: ${actual['profit']:.2f}")
+                    pos["pnl"] = round(pos.get("pnl", 0) + actual["profit"], 2)
+                else:
+                    pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
                 pos["remaining_lots"] = 0.0
                 return
 
@@ -412,7 +417,8 @@ class AggressiveBot:
                             lot_size = self._calc_lot_size(balance)
                             if lot_size >= 0.01:
                                 mt5_type = mt5.ORDER_TYPE_BUY if direction == "buy" else mt5.ORDER_TYPE_SELL
-                                price = bar["close"]
+                                tick = self.connector.get_tick()
+                                price = tick["ask"] if direction == "buy" else tick["bid"]
                                 sl = price - SL_PRICE if direction == "buy" else price + SL_PRICE
                                 tp = price + SL_PRICE if direction == "buy" else price - SL_PRICE
 
@@ -435,6 +441,7 @@ class AggressiveBot:
                                         "entry": order["price"],
                                         "sl": sl,
                                         "original_sl": sl,
+                                        "tag": "AGGR",
                                         "tp1_lots": tp1_l,
                                         "remaining_lots": lot_size,
                                         "original_lot_size": lot_size,
