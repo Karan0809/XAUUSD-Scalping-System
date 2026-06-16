@@ -265,8 +265,10 @@ class MT5Connector:
             raise MT5ConnectorError(f"Cannot get tick for {symbol}")
 
         order_type_str = "buy" if order_type == mt5.ORDER_TYPE_BUY else "sell"
-        point = mt5.symbol_info(symbol).point
-        min_stop = max(point, 0.05)
+        info = mt5.symbol_info(symbol)
+        point = info.point
+        stops_level = info.trade_stops_level * point if info.trade_stops_level > 0 else 0
+        min_stop = stops_level if stops_level > 0 else max(point, 0.10)
 
         if sl is not None:
             if order_type == mt5.ORDER_TYPE_BUY:
@@ -295,13 +297,35 @@ class MT5Connector:
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
-        result = mt5.order_send(request)
-        if result is None:
-            error = mt5.last_error()
-            logger.error(f"Order send failed: {error}")
-            raise MT5ConnectorError(f"Order send failed: {error}")
-
-        if result.retcode not in (0, 1, 10008, 10009):
+        for attempt in range(2):
+            result = mt5.order_send(request)
+            if result is None:
+                error = mt5.last_error()
+                logger.error(f"Order send failed: {error}")
+                raise MT5ConnectorError(f"Order send failed: {error}")
+            if result.retcode in (0, 1, 10008, 10009):
+                break
+            if attempt == 0 and result.retcode == 10016:
+                logger.warning(f"Order rejected (10016), retrying with fresh tick...")
+                time.sleep(0.5)
+                tick = mt5.symbol_info_tick(symbol)
+                if tick is None:
+                    raise MT5ConnectorError("Cannot get tick on retry")
+                fresh_price = tick.ask if order_type == mt5.ORDER_TYPE_BUY else tick.bid
+                old_price = request["price"]
+                price_shift = fresh_price - old_price
+                request["price"] = fresh_price
+                if order_type == mt5.ORDER_TYPE_BUY:
+                    fresh_sl = request.get("sl", fresh_price - 0.20) + price_shift
+                    fresh_tp = request.get("tp", fresh_price + 0.20) + price_shift
+                    request["sl"] = min(fresh_sl, tick.bid - min_stop)
+                    request["tp"] = max(fresh_tp, request["sl"] + min_stop)
+                else:
+                    fresh_sl = request.get("sl", fresh_price + 0.20) + price_shift
+                    fresh_tp = request.get("tp", fresh_price - 0.20) + price_shift
+                    request["sl"] = max(fresh_sl, tick.ask + min_stop)
+                    request["tp"] = min(fresh_tp, request["sl"] - min_stop)
+                continue
             logger.error(
                 f"Order rejected: retcode={result.retcode}, "
                 f"comment={result.comment}"
@@ -313,7 +337,7 @@ class MT5Connector:
 
         logger.info(
             f"Order placed: {order_type_str} {volume} {symbol} "
-            f"@{result.price}, SL={sl}, TP={tp}, "
+            f"@{result.price}, SL={request['sl']:.2f}, TP={request['tp']:.2f}, "
             f"deal={result.deal}"
         )
         return {
