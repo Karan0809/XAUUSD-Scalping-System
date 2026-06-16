@@ -1,3 +1,4 @@
+import time
 import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
@@ -29,6 +30,8 @@ class TelegramNotifier:
         self._base_url = (
             f"https://api.telegram.org/bot{self.settings.telegram_token}"
         )
+        self._consecutive_failures: int = 0
+        self._last_attempt: float = 0
         if self._enabled:
             logger.info(f"Telegram alerts enabled for {len(self._chat_ids)} chat(s)")
         else:
@@ -36,9 +39,14 @@ class TelegramNotifier:
 
     def _send(self, text: str, parse_mode: str = "HTML") -> bool:
         if not self._enabled:
-            logger.debug(f"Telegram disabled, would send: {text[:50]}...")
             return False
 
+        cooldown = min(2 ** self._consecutive_failures, 300)
+        if time.time() - self._last_attempt < cooldown:
+            logger.debug(f"Telegram cooldown ({cooldown}s), skipping")
+            return False
+
+        self._last_attempt = time.time()
         success = False
         for chat_id in self._chat_ids:
             try:
@@ -49,11 +57,15 @@ class TelegramNotifier:
                     "parse_mode": parse_mode,
                     "disable_web_page_preview": True,
                 }
-                resp = requests.post(url, json=payload, timeout=10)
+                resp = requests.post(url, json=payload, timeout=5)
                 resp.raise_for_status()
                 success = True
             except requests.RequestException as e:
-                logger.error(f"Telegram send to {chat_id} failed: {e}")
+                logger.warning(f"Telegram send to {chat_id} failed: {e}")
+        if success:
+            self._consecutive_failures = 0
+        else:
+            self._consecutive_failures += 1
         return success
 
     def send_photo(self, photo_path: str, caption: str = "") -> bool:

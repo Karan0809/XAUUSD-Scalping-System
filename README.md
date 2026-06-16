@@ -208,6 +208,9 @@ Trades 24/5 on zone+momentum confluence with fixed 20-pip SL. No session awarene
 | **Aggressive stale-ticket PnL = 0** | When position disappeared from MT5 without deal history, PnL was set to accumulated partials (0 if none partialed). Fixed by computing PnL from SL price using `pdiff * remaining * 100 - commission` — same formula as the ORB bot's `_resolve_position_closed`. |
 | **Missing `trade_logger` close on aggressive stale ticket** | `trade_logger.info("CLOSE ...")` was absent in the stale-ticket path — trades.log incomplete. Fixed by adding the call before `record_trade`. |
 | **Friday reconnect ignores mongo return** | `mongo.connect()` return value unchecked after weekend reconnection — trades silently lost. Fixed by logging a warning on failure in both bots. |
+| **SL updated before broker modify confirms** | TP1 set `pos["sl"] = entry` *before* calling `modify_position()`. If the broker rejected the modify, local SL was at entry while broker had original SL — premature close on next bar. Fixed by moving SL update into `if ok:` branch in both bots. |
+| **Telegram heartbeat fires immediately on startup** | `_last_heartbeat` initialized to `0`, so the first loop iteration sent heartbeat immediately — blocked startup for 20s (2 chat IDs × 10s timeout). Fixed by initializing to `time.time()`. |
+| **Telegram 10s timeout blocks bot** | When `api.telegram.org` was unreachable, each HTTP request blocked for 10s — 20s per heartbeat cycle. Fixed by reducing timeout to 5s and adding exponential backoff (2^failures up to 5min) with `WARNING`-level logging. |
 
 ## Project Structure
 

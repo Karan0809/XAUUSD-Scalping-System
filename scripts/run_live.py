@@ -59,7 +59,7 @@ class ScalperBot:
         self._position: Optional[Dict[str, Any]] = None
         self._df_15min: Optional[pd.DataFrame] = None
         self._m15_last_refresh: float = 0
-        self._last_heartbeat: float = 0
+        self._last_heartbeat: float = time.time()
         self._start_time: datetime = datetime.now(timezone.utc)
         self._last_signal_time: Optional[datetime] = None
         self._no_money_cooldown_until: float = 0

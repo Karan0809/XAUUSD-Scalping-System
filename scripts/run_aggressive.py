@@ -58,7 +58,7 @@ class AggressiveBot:
         self._position: Optional[Dict[str, Any]] = None
         self._df_15min: Optional[pd.DataFrame] = None
         self._m15_last_refresh: float = 0
-        self._last_heartbeat: float = 0
+        self._last_heartbeat: float = time.time()
         self._start_time: datetime = datetime.now(timezone.utc)
         self._initial_balance: Optional[float] = None
         self._cb_alerted: bool = False
