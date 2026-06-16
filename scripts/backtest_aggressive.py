@@ -351,7 +351,7 @@ def main():
 
         elif trades_today < max_trades_per_day:
             spread_pips = df["spread"].iloc[i]
-            if spread_pips > 20.0:
+            if spread_pips > settings.max_spread:
                 result.spread_filtered += 1
                 continue
 

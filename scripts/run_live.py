@@ -63,6 +63,7 @@ class ScalperBot:
         self._start_time: datetime = datetime.now(timezone.utc)
         self._last_signal_time: Optional[datetime] = None
         self._no_money_cooldown_until: float = 0
+        self._cb_alerted: bool = False
         self._initial_balance: Optional[float] = None
 
     def _load_15min_data(self) -> None:
@@ -97,6 +98,7 @@ class ScalperBot:
         if self._current_date != today:
             self._current_date = today
             self._trades_today = 0
+            self._cb_alerted = False
             self.orb.reset()
             acct = self.connector.get_account_info()
             self.risk_mgr.start_day(today, acct["balance"])
@@ -280,7 +282,6 @@ class ScalperBot:
             if not self._position.get("tp1_hit", False) and \
                ((is_buy and bar["high"] >= tp1_level) or (not is_buy and bar["low"] <= tp1_level)):
                 self._close_partial(self._position["tp1_lots"], tp1_level, "tp1", current_time)
-                self._position["sl"] = entry
                 self._position["tp1_hit"] = True
                 self._position["tp_hit_bar"] = j
                 if self._position["remaining_lots"] > 0:
@@ -288,7 +289,9 @@ class ScalperBot:
                         ticket=self._position["ticket"],
                         sl=entry,
                     )
-                    if not ok:
+                    if ok:
+                        self._position["sl"] = entry
+                    else:
                         logger.warning(
                             f"Failed to move SL to BE for {self._position['ticket']}"
                         )
@@ -578,7 +581,8 @@ class ScalperBot:
                     self.connector.disconnect()
                     time.sleep(secs_until_monday)
                     self.connector.connect()
-                    self.mongo.connect()
+                    if not self.mongo.connect():
+                        logger.warning("MongoDB reconnection failed after weekend")
                     self._load_15min_data()
                     self._current_date = None
                     self._m15_last_refresh = 0
@@ -640,6 +644,9 @@ class ScalperBot:
                         allowed, cb_reason = self.risk_mgr.check_entry_allowed(acct["balance"])
                         if not allowed:
                             logger.debug(f"Circuit breaker blocked: {cb_reason}")
+                            if not self._cb_alerted:
+                                self.telegram.alert_error(f"Circuit breaker blocked: {cb_reason}")
+                                self._cb_alerted = True
                             time.sleep(60)
                             continue
 

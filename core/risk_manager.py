@@ -28,6 +28,7 @@ class RiskManager:
             self._daily_loss_sum = 0.0
             self._trades_today = 0
             self._blocked_today = False
+            self._consecutive_losses = 0
             if balance > self._peak_balance:
                 self._peak_balance = balance
 
@@ -69,6 +70,9 @@ class RiskManager:
 
         if self._blocked_today:
             return False, "Blocked for day (consecutive losses or daily loss limit)"
+
+        if balance > self._peak_balance:
+            self._peak_balance = balance
 
         effective_daily_loss_pct = self._get_effective_max_daily_loss_pct(balance)
         daily_loss_pct = (

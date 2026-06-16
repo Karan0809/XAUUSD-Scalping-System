@@ -61,6 +61,7 @@ class AggressiveBot:
         self._last_heartbeat: float = 0
         self._start_time: datetime = datetime.now(timezone.utc)
         self._initial_balance: Optional[float] = None
+        self._cb_alerted: bool = False
 
     def _load_15min_data(self) -> None:
         try:
@@ -94,6 +95,7 @@ class AggressiveBot:
         if self._current_date != today:
             self._current_date = today
             self._trades_today = 0
+            self._cb_alerted = False
             acct = self.connector.get_account_info()
             self.risk_mgr.start_day(today, acct["balance"])
             logger.info(f"New trading day: {today}")
@@ -215,13 +217,25 @@ class AggressiveBot:
                     pos["close_time"] = close_info["time"]
                     logger.info(f"Closed from history: P=${close_info['profit']:.2f}")
                 else:
-                    pos["exit"] = pos.get("_last_price") or pos.get("sl", pos["entry"])
-                    pos["pnl"] = round(pos.get("pnl", 0), 2)
+                    exit_price = pos.get("_last_price") or pos.get("sl", pos["entry"])
+                    pos["exit"] = exit_price
+                    is_buy = pos["type"] == "buy"
+                    pdiff = exit_price - pos["entry"]
+                    if not is_buy:
+                        pdiff = -pdiff
+                    remaining = pos.get("remaining_lots", pos["original_lot_size"])
+                    comm = self.settings.backtest_commission * remaining
+                    pnl_close = round(pdiff * remaining * 100 - comm, 2)
+                    pos["pnl"] = round(pos.get("pnl", 0) + pnl_close, 2)
                     pos["exit_reason"] = "sl"
                     pos["close_time"] = current_time
                 self.risk_mgr.record_trade(pos["pnl"])
                 acct = self.connector.get_account_info()
                 pos["balance"] = acct.get("balance", 0)
+                trade_logger.info(
+                    f"CLOSE {pos['type'].upper()} {pos['entry']:.2f} {pos['close_time']} {pos['pnl']:.2f}",
+                    extra={"trade": pos},
+                )
                 self.telegram.alert_trade_close(pos)
                 self.mongo.save_trade({
                     "trade_id": pos.get("trade_id", ""),
@@ -256,7 +270,6 @@ class AggressiveBot:
             if not pos.get("tp1_hit") and \
                ((is_buy and bar["high"] >= tp1_level) or (not is_buy and bar["low"] <= tp1_level)):
                 self._close_partial(pos["tp1_lots"], tp1_level, "tp1", current_time)
-                pos["sl"] = pos["entry"]
                 pos["tp1_hit"] = True
                 pos["tp_hit_bar"] = j
                 if pos["remaining_lots"] > 0:
@@ -264,7 +277,9 @@ class AggressiveBot:
                         ticket=pos["ticket"],
                         sl=pos["entry"],
                     )
-                    if not ok:
+                    if ok:
+                        pos["sl"] = pos["entry"]
+                    else:
                         logger.warning(f"Failed to move SL to BE for {ticket}")
                 trail_dist = sl_dist * self.settings.trail_multiplier
                 if is_buy:
@@ -462,12 +477,27 @@ class AggressiveBot:
                         SessionValidator.next_monday_utc(now) - now
                     ).total_seconds()
                     logger.info(f"Friday close — sleeping {secs_until_monday/3600:.1f}h")
-                    self._position = None
+                    position_closed = False
+                    if self._position is not None:
+                        try:
+                            self.connector.close_position({
+                                "symbol": self.settings.symbol,
+                                "ticket": self._position["ticket"],
+                                "volume": self._position["remaining_lots"],
+                                "type": self._position["type"],
+                            })
+                            logger.info("Closed open position before Friday shutdown")
+                            position_closed = True
+                        except Exception as e:
+                            logger.error(f"Failed to close position before Friday shutdown: {e}")
+                    if position_closed:
+                        self._position = None
                     self.mongo.disconnect()
                     self.connector.disconnect()
                     time.sleep(secs_until_monday)
                     self.connector.connect()
-                    self.mongo.connect()
+                    if not self.mongo.connect():
+                        logger.warning("MongoDB reconnection failed after weekend")
                     self._load_15min_data()
                     self._current_date = None
                     self._m15_last_refresh = 0
@@ -511,6 +541,9 @@ class AggressiveBot:
                     allowed, cb_reason = self.risk_mgr.check_entry_allowed(acct["balance"])
                     if not allowed:
                         logger.debug(f"CB blocked: {cb_reason}")
+                        if not self._cb_alerted:
+                            self.telegram.alert_error(f"Circuit breaker blocked: {cb_reason}")
+                            self._cb_alerted = True
                         time.sleep(60)
                         continue
 

@@ -125,47 +125,49 @@ On every poll, the bot re-examines all M5 bars since entry (from the position's 
 
 | Filter | Description | Default |
 |---|---|---|
-| **Spread filter** | Skips entries when spread exceeds threshold | 30 pips |
-| **Circuit breaker** | Blocks new entries on 3% daily loss, 4 consecutive losses, or 15% drawdown from peak | On |
+| **Spread filter** | Skips entries when spread exceeds threshold | 60 pips |
+| **Circuit breaker** | Blocks new entries on 3% daily loss, 4 consecutive losses, or 15% drawdown from peak; sends Telegram alert on first block | On |
 | **News filter** | Optional — blocks entry 30 min before/after high-impact USD events (ForexFactory) | Off |
 | **Friday shutdown** | Bot disconnects at 17:00 UTC Friday, sleeps until Monday 00:00 UTC | Auto |
 
 ## Backtest Results (Sep 2025 – Jun 2026)
 
-Backtested on live M5/M1 XAUUSD data across all sessions (Asia + London + NY). Commission: $3.50/lot/side. All tests use tiered fixed risk ($10→$15→$20→$30→$50 based on profit milestones), 0.5 lots hard cap, 1-2 pip entry slippage, 0-1 pip exit slippage, 20-point spread filter, and `trail_multiplier=0.2`.
+Backtested on live M5/M1 XAUUSD data across all sessions (Asia + London + NY). Commission: $3.50/lot/side. All tests use tiered fixed risk ($10→$15→$20→$30→$50 based on profit milestones), 0.5 lots hard cap, 1-2 pip entry slippage, 0-1 pip exit slippage, `max_spread` from settings (default 60.0), and `trail_multiplier=0.2`.
 
-### ORB Scalper ($100 start)
+### ORB Scalper ($1,000 start)
 
 Trades all sessions using ORB pipeline (breakout pullback, aggressive FVG, range reversal) with free trade fallback. Each session allows at most 1 entry. Lot size determined by tiered fixed risk / SL distance, capped at 0.5 lots.
 
 | Metric | Result |
 |---|---|
-| **Total Trades** | 523 |
-| **Win Rate** | 94.26% |
-| **Total Profit** | **$76,456** |
-| **Profit Factor** | 89.24 |
-| **Max Drawdown** | $7.48 (2.77%) |
-| **Avg Win / Loss** | +$156.79 / -$28.01 |
-| **Largest Win / Loss** | +$1,490.61 / -$51.95 |
+| **Total Trades** | 531 |
+| **Win Rate** | 94.54% |
+| **Total Profit** | **$84,344** |
+| **Profit Factor** | 90.35 |
+| **Max Drawdown** | $15.91 (0.96%) |
+| **Avg Win / Loss** | +$169.83 / -$31.33 |
+| **Largest Win / Loss** | +$1,649.57 / -$51.82 |
 | **Recovery Trades** | 8 |
 | **Avg Bars Held** | 2.0 |
-| **Filters** | Spread=441 CB=0 |
+| **Filters** | Spread=89 CB=0 News=0 |
+| **Return** | 8,434% |
 
-### Aggressive M1 ($100 start)
+### Aggressive M1 ($1,000 start)
 
 Trades 24/5 on zone+momentum confluence with fixed 20-pip SL. No session awareness — enters any time zone and momentum align. 50/50 + trailing exit model.
 
 | Metric | Result |
 |---|---|
-| **Total Trades** | 1,435 |
-| **Win Rate** | 77.63% |
-| **Total Profit** | **$61,910** |
-| **Profit Factor** | 17.75 |
-| **Max Drawdown** | $20.22 (1.50%) |
-| **Avg Win / Loss** | +$58.89 / -$11.51 |
-| **Largest Win / Loss** | +$713.40 / -$12.24 |
+| **Total Trades** | 1,471 |
+| **Win Rate** | 77.50% |
+| **Total Profit** | **$67,528** |
+| **Profit Factor** | 18.16 |
+| **Max Drawdown** | $35.42 (0.78%) |
+| **Avg Win / Loss** | +$62.69 / -$11.89 |
+| **Largest Win / Loss** | +$713.43 / -$12.25 |
 | **Avg Bars Held** | 1.4 |
-| **Filters** | Zone=0 Mom=1,580 Spread=417 CB=5,123 |
+| **Filters** | Zone=0 Mom=1,616 Spread=217 CB=3,835 News=0 |
+| **Return** | 6,753% |
 
 ### Key Fixes Applied
 
@@ -199,6 +201,13 @@ Trades 24/5 on zone+momentum confluence with fixed 20-pip SL. No session awarene
 | **`NameError` fix in `_manage_position`** | ORB bot used `rates.index.get_loc()` but the parameter is named `df` — would crash on first poll with an open position. |
 | **Crash guard after `_resolve_position_closed`** | When `_close_partial`'s exception handler called `_resolve_position_closed` → `self._position = None`, the loop body accessed `self._position["remaining_lots"]` on the next iteration → `AttributeError`. Fixed by adding `self._position and` guards and `if self._position is None: break` after each close call. |
 | **Trade double-count on stale-ticket cleanup** | Aggressive bot's `_close_partial` exception handler set `pos["remaining_lots"] = 0.0` without setting `pos["closed"]`, causing the post-loop close logic to re-fire and record P&L twice in risk_mgr with duplicate Telegram alerts. Fixed by setting `pos["closed"] = True` in the handler and adding `elif pos["remaining_lots"] <= 0: self._position = None` to clean up. |
+| **Consecutive losses not reset on new day** | `start_day()` didn't clear `_consecutive_losses`, so a loss streak persisted across days — blocked entry indefinitely. Fixed by resetting to 0 in the date-change block. |
+| **Peak balance only updated via `start_day()`** | Intraday balance increases were invisible to the drawdown check — bot could kill itself on a phantom drawdown. Fixed by updating `_peak_balance` at the top of `check_entry_allowed()`. |
+| **Telegram alert on circuit breaker block** | CB blocked silently — no notification. Fixed by adding `self.telegram.alert_error()` with a `_cb_alerted` sentinel flag (resets on `_check_new_day`), preventing spam every 60s loop iteration. |
+| **Backtest spread hardcoded to 20.0** | Live bot used `settings.max_spread` (default 60.0) but backtests used `20.0` — inconsistent filtering. Fixed both `backtest.py` and `backtest_aggressive.py` to use `settings.max_spread`. |
+| **Aggressive stale-ticket PnL = 0** | When position disappeared from MT5 without deal history, PnL was set to accumulated partials (0 if none partialed). Fixed by computing PnL from SL price using `pdiff * remaining * 100 - commission` — same formula as the ORB bot's `_resolve_position_closed`. |
+| **Missing `trade_logger` close on aggressive stale ticket** | `trade_logger.info("CLOSE ...")` was absent in the stale-ticket path — trades.log incomplete. Fixed by adding the call before `record_trade`. |
+| **Friday reconnect ignores mongo return** | `mongo.connect()` return value unchecked after weekend reconnection — trades silently lost. Fixed by logging a warning on failure in both bots. |
 
 ## Project Structure
 
@@ -224,6 +233,9 @@ Trades 24/5 on zone+momentum confluence with fixed 20-pip SL. No session awarene
 │   └── run_aggressive.py        # Live trading bot (Aggressive M1)
 ├── telegram/
 │   └── alerts.py                # Telegram notifications (open/close/error/heartbeat)
+├── tests/
+│   ├── test_cases.py            # 210+ unit tests (entry logic, risk mgr, session, spread, CB, logging, PnL, SL/TP)
+│   └── test_resilience.py       # 36 resilience tests (MT5 failures, reconnect, timeout, partial data)
 ├── .env                         # Default MT5 credentials, MongoDB URI, Telegram tokens
 ├── .env.aggressive              # Env file for second account (aggressive bot)
 ├── requirements.txt
@@ -288,7 +300,7 @@ The `--env` path resolves relative to the project root (not the working director
 |---|---|---|
 | `risk_percent` | 2.0 | Risk per trade (% of balance) — backtests use tiered fixed risk |
 | `max_daily_trades` | 15 | Max trades per day |
-| `max_spread` | 20.0 | Max spread in points before skipping entry |
+| `max_spread` | 60.0 | Max spread in points before skipping entry |
 | `trail_multiplier` | 0.2 | Trailing stop distance = multiplier × SL distance (0.2 outperforms 0.3 across all metrics) |
 | `trailing_stop_enabled` | True | Master toggle for trailing stop logic |
 | `circuit_breaker_max_daily_loss_pct` | 3.0 | Daily loss limit (%) — blocks new entries |
@@ -323,17 +335,30 @@ The bot:
 10. Sends Telegram alerts for open, close, error, and heartbeat
 11. Closes any open position at 17:00 UTC Friday, disconnects, and sleeps until Monday 00:00 UTC (auto-restart)
 
+### Testing
+
+```bash
+# Run full test suite (246 tests)
+python -m pytest tests/
+
+# Run with verbosity
+python -m pytest tests/ -v --tb=short
+
+# Run specific test class
+python -m pytest tests/ -k TestMongoWriteFailure -v
+```
+
 ### Backtesting
 
 ```bash
 # ORB Scalper (session-based, free trade fallback)
-python scripts/backtest.py --start 2025-09-01 --end 2026-06-15 --balance 1000
+python scripts/backtest.py --start 2025-09-01 --end 2026-06-03 --balance 1000
 
 # Aggressive M1 (zone+momentum, 24/7)
-python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-15 --balance 1000
+python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-10 --balance 1000
 ```
 
-Both backtests use tiered fixed risk, 0.5 max lots, slippage model, and 20-point spread filter. Results are saved as JSON with `--output`.
+Both backtests use tiered fixed risk, 0.5 max lots, slippage model, and read `max_spread` from settings (default 60.0). Results are saved as JSON with `--output`.
 
 - `--risk <pct>` — risk percent (backtests use tiered fixed risk regardless)
 - `--output <file>` — save results as JSON
@@ -348,7 +373,7 @@ Both backtests use tiered fixed risk, 0.5 max lots, slippage model, and 20-point
 - **SL from bid/ask:** SL must be ≥ 5 pips from bid (buys) or ask (sells) — prevents wide-spread entries from placing SL directly at market
 - **Partial profit locking:** SL moves to breakeven after TP1 hit
 - **Trailing stop:** 0.2× SL distance (configurable via `trail_multiplier`), activates after TP1 (50-50) or TP2 (3-target); skips activation bar to avoid wick noise
-- **Spread filter:** Skips entry if spread > 20 points (backtest) or configured threshold (live)
+- **Spread filter:** Skips entry if spread > configured threshold (default 60.0 pips), sleeps 10s, logs debug
 - **Circuit breaker:** Blocks entry after 3% daily loss / 4 consecutive losses / 15% drawdown
 - **News filter:** (Optional) blocks entry during high-impact USD events (ForexFactory)
 - **Commission:** $3.50 per lot per side (built into all calculations)
