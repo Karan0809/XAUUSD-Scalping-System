@@ -265,7 +265,10 @@ class ScalperBot:
         # Conditions are guarded by flags (tp1_hit, tp2_hit, remaining_lots)
         # so re-processing bars is idempotent and safe.
         open_time = self._position["open_time"]
-        start_idx = max(0, i - 30)
+        try:
+            start_idx = max(0, df.index.get_loc(open_time))
+        except KeyError:
+            start_idx = 0
         for j in range(start_idx, i + 1):
             if self._position["remaining_lots"] <= 0:
                 break
@@ -281,10 +284,14 @@ class ScalperBot:
                 self._position["tp1_hit"] = True
                 self._position["tp_hit_bar"] = j
                 if self._position["remaining_lots"] > 0:
-                    self.connector.modify_position(
+                    ok = self.connector.modify_position(
                         ticket=self._position["ticket"],
                         sl=entry,
                     )
+                    if not ok:
+                        logger.warning(
+                            f"Failed to move SL to BE for {self._position['ticket']}"
+                        )
                 # Activate trailing for 50-50 model after TP1
                 if self._position["tp3_lots"] == 0 and self._position["tp2_lots"] > 0 and \
                    self._position["remaining_lots"] > 0:
@@ -329,17 +336,21 @@ class ScalperBot:
                         self._position["trail_level"] = new_trail
 
             # Check trailing stop — skip activation bar
-            if self._position.get("trailing_activated") and self._position["remaining_lots"] > 0 and \
+            if self._position and self._position.get("trailing_activated") and self._position["remaining_lots"] > 0 and \
                j != self._position.get("trail_activation_bar") and \
                ((is_buy and bar["low"] <= self._position["trail_level"]) or (not is_buy and bar["high"] >= self._position["trail_level"])):
                 self._close_partial(self._position["remaining_lots"], self._position["trail_level"], "trail", current_time)
+                if self._position is None:
+                    break
 
             # SL/be check on remaining position — skip the bar that triggered TP1/TP2
-            if self._position["remaining_lots"] > 0 and \
+            if self._position and self._position["remaining_lots"] > 0 and \
                j != self._position.get("tp_hit_bar") and \
                ((is_buy and bar["low"] <= self._position["sl"]) or (not is_buy and bar["high"] >= self._position["sl"])):
                 self._close_partial(self._position["remaining_lots"], self._position["sl"],
                                     "be" if self._position.get("tp1_hit") else "sl", current_time)
+                if self._position is None:
+                    break
 
         if self._position and self._position["remaining_lots"] <= 0:
             trade = self._position
@@ -465,6 +476,26 @@ class ScalperBot:
                 self._position["tp2_lots"] = (cents - tp1_c) / 100.0
             else:
                 self._position["tp1_lots"] = p["volume"]
+            # Check if position was partially closed before restart
+            try:
+                close_info = self.connector.get_position_close_from_history(p["ticket"])
+            except Exception:
+                close_info = None
+            if close_info:
+                self._position["tp1_hit"] = True
+                self._position["tp1_lots"] = 0
+                self._position["tp2_lots"] = 0
+                self._position["tp3_lots"] = 0
+                self._position["trailing_activated"] = True
+                sl_dist = max(abs(p["price_open"] - (p["sl"] or p["price_open"])), 0.15)
+                trail_dist = sl_dist * self.settings.trail_multiplier
+                if p["type"] == "buy":
+                    self._position["trail_level"] = p["price_open"] - trail_dist
+                else:
+                    self._position["trail_level"] = p["price_open"] + trail_dist
+                self._position["trail_activation_bar"] = 999999
+                logger.info("Recovered partially closed position — converted to trail-only")
+
             date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             self._current_date = date_str
             self._trades_today = 1
@@ -632,34 +663,16 @@ class ScalperBot:
                                     time.sleep(10)
                                     continue
 
-                                # Slippage guard — skip if current price is too far from signal entry
-                                current_market = tick["ask"] if signal["direction"] == "buy" else tick["bid"]
-                                slippage = abs(current_market - signal["entry"])
-                                if slippage > self.settings.max_slippage_points:
-                                    logger.info(
-                                        f"Skipping {signal['direction']}: slippage {slippage:.2f} "
-                                        f"> max {self.settings.max_slippage_points:.2f} "
-                                        f"(signal={signal['entry']:.2f} market={current_market:.2f})"
-                                    )
-                                    time.sleep(10)
-                                    continue
-
                                 sl_dist = abs(signal["entry"] - signal["sl"])
                                 tp_dist = abs(signal["entry"] - signal["tp"])
 
                                 if signal["direction"] == "buy":
                                     entry_price = tick["ask"]
                                     new_sl = entry_price - sl_dist
-                                    min_sl = tick["bid"] - 0.05
-                                    if new_sl > min_sl:
-                                        new_sl = min_sl
                                     new_tp = entry_price + tp_dist
                                 else:
                                     entry_price = tick["bid"]
                                     new_sl = entry_price + sl_dist
-                                    min_sl = tick["ask"] + 0.05
-                                    if new_sl < min_sl:
-                                        new_sl = min_sl
                                     new_tp = entry_price - tp_dist
 
                                 try:
@@ -688,13 +701,15 @@ class ScalperBot:
                                         tp1_c = cents
                                         tp2_c = 0
                                         tp3_c = 0
+                                    actual_sl = order.get("sl", new_sl)
+                                    actual_tp = order.get("tp", new_tp)
                                     self._position = {
                                         "type": signal["direction"],
                                         "entry": order["price"],
-                                        "sl": new_sl,
-                                        "tp": new_tp,
+                                        "sl": actual_sl,
+                                        "tp": actual_tp,
                                         "lot_size": lot_size,
-                                        "original_sl": new_sl,
+                                        "original_sl": actual_sl,
                                         "original_lot_size": lot_size,
                                         "tp1_lots": tp1_c / 100.0,
                                         "tp2_lots": tp2_c / 100.0,
@@ -708,15 +723,16 @@ class ScalperBot:
                                         "trail_activation_bar": 0,
                                         "trade_id": trade_id,
                                         "open_time": current_time,
-                                        "ticket": order.get("order", 0),
+                                        "ticket": order["ticket"],
+                                        "session": current_session,
                                     }
                                     self.mongo.save_trade({
                                         "trade_id": trade_id,
                                         "symbol": self.settings.symbol,
                                         "signal_type": signal["direction"],
                                         "entry_price": order["price"],
-                                        "stop_loss": new_sl,
-                                        "take_profit": new_tp,
+                                        "stop_loss": actual_sl,
+                                        "take_profit": actual_tp,
                                         "lot_size": lot_size,
                                         "session_date": current_time.strftime("%Y-%m-%d"),
                                         "open_time": current_time,
@@ -726,11 +742,11 @@ class ScalperBot:
                                     logger.info(
                                         f"ORB TRADE {signal['direction'].upper()} "
                                         f"{lot_size} @ {order['price']:.2f} "
-                                        f"SL={new_sl:.2f} TP={new_tp:.2f}"
+                                        f"SL={actual_sl:.2f} TP={actual_tp:.2f}"
                                     )
                                     trade_logger.info(
                                         f"OPEN {signal['direction'].upper()} {lot_size} "
-                                        f"{order['price']:.2f} {new_sl:.2f} {new_tp:.2f}",
+                                        f"{order['price']:.2f} {actual_sl:.2f} {actual_tp:.2f}",
                                         extra={"trade": self._position},
                                     )
                                     acct = self.connector.get_account_info()

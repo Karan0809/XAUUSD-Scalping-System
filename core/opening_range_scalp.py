@@ -363,12 +363,13 @@ class OpeningRangeScalp:
         if df_5min is None or len(df_5min) < 12:
             return False
         pre = df_5min.tail(12).iloc[:-2]
+        recent = df_5min.tail(5)
         if direction == "buy":
             recent_high = pre["high"].max()
-            self._swing_broken = df_5min["high"].iloc[-1] > recent_high
+            self._swing_broken = recent["high"].max() > recent_high
         else:
             recent_low = pre["low"].min()
-            self._swing_broken = df_5min["low"].iloc[-1] < recent_low
+            self._swing_broken = recent["low"].min() < recent_low
         return self._swing_broken
 
     def _check_slow_momentum(self, df_5min: pd.DataFrame, n: int = 5) -> bool:

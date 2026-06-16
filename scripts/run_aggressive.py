@@ -170,12 +170,14 @@ class AggressiveBot:
                 actual = self.connector.get_position_close_from_history(ticket)
                 if actual:
                     logger.info(f"Actual close P&L from history: ${actual['profit']:.2f}")
-                    pos["pnl"] = round(pos.get("pnl", 0) + actual["profit"], 2)
+                    pos["pnl"] = round(actual["profit"], 2)
                 else:
                     pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
                 pos["remaining_lots"] = 0.0
+                pos["closed"] = True
                 return
 
+        pos["_last_price"] = price
         pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
         pos["remaining_lots"] = round(pos["remaining_lots"] - lots, 2)
 
@@ -184,62 +186,122 @@ class AggressiveBot:
             f"PARTIAL {pos['type'].upper()} {lots} {pos['entry']:.2f} {price:.2f} {profit:.2f}",
             extra={"trade": pos, "reason": reason},
         )
+        self.telegram.alert_partial(pos, reason, lots, price, profit, pos["pnl"])
 
-    def _manage_position(self, bar: Dict, i: int, current_time: datetime) -> None:
+    def _manage_position(self, rates: pd.DataFrame, i: int, current_time: datetime) -> None:
         if self._position is None:
             return
+
         pos = self._position
         is_buy = pos["type"] == "buy"
         sl_dist = abs(pos["entry"] - pos["original_sl"])
         tp1_level = pos["entry"] + sl_dist if is_buy else pos["entry"] - sl_dist
 
-        # TP1 at 1:1 — close 50%, move SL to BE, activate trail
-        if not pos.get("tp1_hit") and \
-           ((is_buy and bar["high"] >= tp1_level) or (not is_buy and bar["low"] <= tp1_level)):
-            self._close_partial(pos["tp1_lots"], tp1_level, "tp1", current_time)
-            pos["sl"] = pos["entry"]
-            pos["tp1_hit"] = True
-            if pos["remaining_lots"] > 0:
-                self.connector.modify_position(
-                    ticket=pos["ticket"],
-                    sl=pos["entry"],
-                )
-            trail_dist = sl_dist * self.settings.trail_multiplier
-            if is_buy:
-                pos["trail_level"] = bar["high"] - trail_dist
-            else:
-                pos["trail_level"] = bar["low"] + trail_dist
-            pos["trailing_activated"] = True
-            pos["trail_activation_bar"] = i
+        # Stale ticket check — verify position still exists on MT5
+        ticket = pos.get("ticket")
+        if ticket:
+            try:
+                positions = self.connector.get_positions(self.settings.symbol)
+                still_open = any(p["ticket"] == ticket for p in positions)
+            except Exception:
+                still_open = True
+            if not still_open:
+                logger.warning(f"Position {ticket} no longer on MT5, resolving...")
+                close_info = self.connector.get_position_close_from_history(ticket)
+                if close_info is not None:
+                    pos["pnl"] = round(close_info["profit"], 2)
+                    pos["exit"] = close_info["price"]
+                    pos["exit_reason"] = "sl"
+                    pos["close_time"] = close_info["time"]
+                    logger.info(f"Closed from history: P=${close_info['profit']:.2f}")
+                else:
+                    pos["exit"] = pos.get("_last_price") or pos.get("sl", pos["entry"])
+                    pos["pnl"] = round(pos.get("pnl", 0), 2)
+                    pos["exit_reason"] = "sl"
+                    pos["close_time"] = current_time
+                self.risk_mgr.record_trade(pos["pnl"])
+                acct = self.connector.get_account_info()
+                pos["balance"] = acct.get("balance", 0)
+                self.telegram.alert_trade_close(pos)
+                self.mongo.save_trade({
+                    "trade_id": pos.get("trade_id", ""),
+                    "symbol": self.settings.symbol,
+                    "signal_type": pos["type"],
+                    "entry_price": pos["entry"],
+                    "stop_loss": pos.get("original_sl"),
+                    "lot_size": pos["original_lot_size"],
+                    "exit_price": pos.get("exit"),
+                    "profit": pos["pnl"],
+                    "exit_reason": pos["exit_reason"],
+                    "close_time": pos["close_time"],
+                    "session_date": pos["close_time"].strftime("%Y-%m-%d"),
+                    "strategy": "aggressive_m1",
+                })
+                self._position = None
+                return
 
-        # Update trailing stop
-        if pos.get("trailing_activated") and pos["remaining_lots"] > 0:
-            trail_dist = sl_dist * self.settings.trail_multiplier
-            if is_buy:
-                new_trail = bar["high"] - trail_dist
-                if new_trail > pos["trail_level"]:
-                    pos["trail_level"] = new_trail
-            else:
-                new_trail = bar["low"] + trail_dist
-                if new_trail < pos["trail_level"]:
-                    pos["trail_level"] = new_trail
+        open_time = pos["open_time"]
+        try:
+            start_idx = max(0, rates.index.get_loc(open_time))
+        except KeyError:
+            start_idx = 0
+        for j in range(start_idx, i + 1):
+            if pos["remaining_lots"] <= 0:
+                break
+            bar = rates.iloc[j]
+            if rates.index[j] <= open_time:
+                continue
 
-        # Check trailing stop — skip activation bar
-        if pos.get("trailing_activated") and pos["remaining_lots"] > 0 and \
-           i != pos.get("trail_activation_bar") and \
-           ((is_buy and bar["low"] <= pos["trail_level"]) or (not is_buy and bar["high"] >= pos["trail_level"])):
-            self._close_partial(pos["remaining_lots"], pos["trail_level"], "trail", current_time)
+            # TP1 at 1:1 — close 50%, move SL to BE, activate trail
+            if not pos.get("tp1_hit") and \
+               ((is_buy and bar["high"] >= tp1_level) or (not is_buy and bar["low"] <= tp1_level)):
+                self._close_partial(pos["tp1_lots"], tp1_level, "tp1", current_time)
+                pos["sl"] = pos["entry"]
+                pos["tp1_hit"] = True
+                pos["tp_hit_bar"] = j
+                if pos["remaining_lots"] > 0:
+                    ok = self.connector.modify_position(
+                        ticket=pos["ticket"],
+                        sl=pos["entry"],
+                    )
+                    if not ok:
+                        logger.warning(f"Failed to move SL to BE for {ticket}")
+                trail_dist = sl_dist * self.settings.trail_multiplier
+                if is_buy:
+                    pos["trail_level"] = bar["high"] - trail_dist
+                else:
+                    pos["trail_level"] = bar["low"] + trail_dist
+                pos["trailing_activated"] = True
+                pos["trail_activation_bar"] = j
 
-        # SL/BE check — skip the bar that triggered TP1
-        if pos["remaining_lots"] > 0 and \
-           i != pos.get("tp_hit_bar") and \
-           ((is_buy and bar["low"] <= pos["sl"]) or (not is_buy and bar["high"] >= pos["sl"])):
-            self._close_partial(pos["remaining_lots"], pos["sl"],
-                                "be" if pos.get("tp1_hit") else "sl", current_time)
+            # Update trailing stop
+            if pos.get("trailing_activated") and pos["remaining_lots"] > 0:
+                trail_dist = sl_dist * self.settings.trail_multiplier
+                if is_buy:
+                    new_trail = bar["high"] - trail_dist
+                    if new_trail > pos["trail_level"]:
+                        pos["trail_level"] = new_trail
+                else:
+                    new_trail = bar["low"] + trail_dist
+                    if new_trail < pos["trail_level"]:
+                        pos["trail_level"] = new_trail
+
+            # Check trailing stop — skip activation bar
+            if pos.get("trailing_activated") and pos["remaining_lots"] > 0 and \
+               j != pos.get("trail_activation_bar") and \
+               ((is_buy and bar["low"] <= pos["trail_level"]) or (not is_buy and bar["high"] >= pos["trail_level"])):
+                self._close_partial(pos["remaining_lots"], pos["trail_level"], "trail", current_time)
+
+            # SL/BE check — skip the bar that triggered TP1
+            if pos["remaining_lots"] > 0 and \
+               j != pos.get("tp_hit_bar") and \
+               ((is_buy and bar["low"] <= pos["sl"]) or (not is_buy and bar["high"] >= pos["sl"])):
+                self._close_partial(pos["remaining_lots"], pos["sl"],
+                                    "be" if pos.get("tp1_hit") else "sl", current_time)
 
         if pos["remaining_lots"] <= 0 and not pos.get("closed"):
             pos["closed"] = True
-            pos["exit"] = pos.get("_last_price", pos["entry"])
+            pos["exit"] = pos.get("_last_price", None)
             pos["exit_reason"] = "trail" if pos.get("trailing_activated") else "sl/be"
             pos["close_time"] = current_time
 
@@ -266,6 +328,8 @@ class AggressiveBot:
                 "session_date": current_time.strftime("%Y-%m-%d"),
                 "strategy": "aggressive_m1",
             })
+            self._position = None
+        elif pos["remaining_lots"] <= 0:
             self._position = None
 
     def initialize(self) -> bool:
@@ -300,6 +364,54 @@ class AggressiveBot:
         account = self.connector.get_account_info()
         logger.info(f"Account: {account['login']}, Balance: ${account['balance']:.2f}")
         self._initial_balance = account["balance"]
+
+        existing = self.connector.get_positions(self.settings.symbol)
+        if existing:
+            p = existing[0]
+            cents = round(p["volume"] * 100)
+            tp1_l = int(cents * 0.5) / 100.0
+            self._position = {
+                "type": p["type"],
+                "entry": p["price_open"],
+                "sl": p["sl"],
+                "tp": p["tp"],
+                "lot_size": p["volume"],
+                "original_sl": p["sl"],
+                "original_lot_size": p["volume"],
+                "tag": "AGGR",
+                "tp1_lots": tp1_l,
+                "remaining_lots": p["volume"],
+                "pnl": 0.0,
+                "tp1_hit": False,
+                "trailing_activated": False,
+                "trail_level": 0.0,
+                "trail_activation_bar": 0,
+                "tp_hit_bar": 0,
+                "trade_id": str(uuid4()),
+                "open_time": p["time"],
+                "ticket": p["ticket"],
+            }
+            try:
+                close_info = self.connector.get_position_close_from_history(p["ticket"])
+            except Exception:
+                close_info = None
+            if close_info:
+                self._position["tp1_hit"] = True
+                self._position["tp1_lots"] = 0
+                self._position["trailing_activated"] = True
+                sl_dist = max(abs(p["price_open"] - (p["sl"] or p["price_open"])), 0.15)
+                trail_dist = sl_dist * self.settings.trail_multiplier
+                if p["type"] == "buy":
+                    self._position["trail_level"] = p["price_open"] - trail_dist
+                else:
+                    self._position["trail_level"] = p["price_open"] + trail_dist
+                self._position["trail_activation_bar"] = 999999
+                logger.info("Recovered partially closed position — converted to trail-only")
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            self._current_date = date_str
+            self._trades_today = 1
+            logger.info(f"Recovered orphaned position: {p['type']} {p['volume']:.2f} @ {p['price_open']:.2f} ticket={p['ticket']}")
+            self.telegram.alert_error(f"Recovered orphaned position: {p['type']} {p['volume']:.2f} @ {p['price_open']:.2f}")
 
         self.telegram._send(
             f"\U0001f916 <b>Aggressive M1 Scalper Bot Started</b>\n"
@@ -385,7 +497,7 @@ class AggressiveBot:
                 if self._df_15min is not None:
                     self.zone_detector.update_test_status(bar["high"], bar["low"])
 
-                self._manage_position(bar, i, current_time)
+                self._manage_position(rates, i, current_time)
 
                 if self._position is None and self._trades_today < MAX_TRADES_PER_DAY:
                     if self.news_filter is not None:
@@ -417,10 +529,9 @@ class AggressiveBot:
                             lot_size = self._calc_lot_size(balance)
                             if lot_size >= 0.01:
                                 mt5_type = mt5.ORDER_TYPE_BUY if direction == "buy" else mt5.ORDER_TYPE_SELL
-                                tick = self.connector.get_tick()
                                 price = tick["ask"] if direction == "buy" else tick["bid"]
                                 sl = price - SL_PRICE if direction == "buy" else price + SL_PRICE
-                                tp = price + SL_PRICE if direction == "buy" else price - SL_PRICE
+                                tp = (price + SL_PRICE * 25) if direction == "buy" else (price - SL_PRICE * 25)
 
                                 try:
                                     order = self.connector.place_order(
@@ -436,11 +547,14 @@ class AggressiveBot:
                                     trade_id = str(uuid4())
                                     cents = round(lot_size * 100)
                                     tp1_l = int(cents * 0.5) / 100.0
+                                    actual_sl = order.get("sl", sl)
+                                    actual_tp = order.get("tp", tp)
                                     self._position = {
                                         "type": direction,
                                         "entry": order["price"],
-                                        "sl": sl,
-                                        "original_sl": sl,
+                                        "sl": actual_sl,
+                                        "tp": actual_tp,
+                                        "original_sl": actual_sl,
                                         "tag": "AGGR",
                                         "tp1_lots": tp1_l,
                                         "remaining_lots": lot_size,
@@ -453,15 +567,15 @@ class AggressiveBot:
                                         "tp_hit_bar": 0,
                                         "trade_id": trade_id,
                                         "open_time": current_time,
-                                        "ticket": order.get("order", 0),
+                                        "ticket": order["ticket"],
                                     }
                                     self.mongo.save_trade({
                                         "trade_id": trade_id,
                                         "symbol": self.settings.symbol,
                                         "signal_type": direction,
                                         "entry_price": order["price"],
-                                        "stop_loss": sl,
-                                        "take_profit": tp,
+                                        "stop_loss": actual_sl,
+                                        "take_profit": actual_tp,
                                         "lot_size": lot_size,
                                         "session_date": current_time.strftime("%Y-%m-%d"),
                                         "open_time": current_time,
@@ -470,11 +584,11 @@ class AggressiveBot:
                                     logger.info(
                                         f"AGGR TRADE {direction.upper()} "
                                         f"{lot_size} @ {order['price']:.2f} "
-                                        f"SL={sl:.2f} TP={tp:.2f}"
+                                        f"SL={actual_sl:.2f} TP={actual_tp:.2f}"
                                     )
                                     trade_logger.info(
                                         f"OPEN {direction.upper()} {lot_size} "
-                                        f"{order['price']:.2f} {sl:.2f} {tp:.2f}",
+                                        f"{order['price']:.2f} {actual_sl:.2f} {actual_tp:.2f}",
                                         extra={"trade": self._position},
                                     )
                                     acct = self.connector.get_account_info()

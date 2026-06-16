@@ -341,12 +341,14 @@ class MT5Connector:
             f"deal={result.deal}"
         )
         return {
-            "order": result.order,
+            "ticket": result.deal or result.order,
             "deal": result.deal,
             "price": result.price,
             "volume": volume,
             "type": order_type_str,
             "comment": comment,
+            "sl": request["sl"],
+            "tp": request["tp"],
         }
 
     def close_position(
@@ -405,25 +407,24 @@ class MT5Connector:
                     "price": result.price,
                 }
 
-        # Stored ticket may be stale — find actual position ticket from MT5
+        # Stored ticket may be stale — try closing any open position for this symbol
         if result and result.retcode == 10013:
             positions = mt5.positions_get(symbol=symbol)
             if positions:
                 for p in positions:
-                    if p.comment == request.get("comment", "") or True:
-                        actual_ticket = p.ticket
-                        if actual_ticket != ticket:
-                            logger.warning(f"Retrying close with actual ticket {actual_ticket} (stored was {ticket})")
-                            request["position"] = actual_ticket
-                            result = mt5.order_send(request)
-                            if result is not None and result.retcode in (0, 1, 10008, 10009):
-                                logger.info(f"Position closed via actual ticket: {actual_ticket} @ {price} deal={result.deal}")
-                                return {
-                                    "order": result.order,
-                                    "deal": result.deal,
-                                    "price": result.price,
-                                }
-                        break  # try first open position for this symbol
+                    actual_ticket = p.ticket
+                    if actual_ticket != ticket:
+                        logger.warning(f"Retrying close with actual ticket {actual_ticket} (stored was {ticket})")
+                        request["position"] = actual_ticket
+                        result = mt5.order_send(request)
+                        if result is not None and result.retcode in (0, 1, 10008, 10009):
+                            logger.info(f"Position closed via actual ticket: {actual_ticket} @ {price} deal={result.deal}")
+                            return {
+                                "order": result.order,
+                                "deal": result.deal,
+                                "price": result.price,
+                            }
+                    break  # try first open position for this symbol
 
         error = mt5.last_error()
         logger.error(f"Close position failed: retcode={result.retcode if result is not None else 'None'}, error={error}")

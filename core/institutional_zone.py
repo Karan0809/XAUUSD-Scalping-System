@@ -149,6 +149,14 @@ class InstitutionalZoneDetector:
             return best if best.strength >= highest.strength else highest
 
     def build_historical(self, df_15min: pd.DataFrame) -> None:
-        self.reset()
-        for idx, row in df_15min.iterrows():
-            self.update(row)
+        old_zones = self.zones
+        old_bars = self._bars
+        self.zones = []
+        self._bars = []
+        try:
+            for idx, row in df_15min.iterrows():
+                self.update(row)
+        except Exception:
+            self.zones = old_zones
+            self._bars = old_bars
+            raise
