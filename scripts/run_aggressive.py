@@ -428,19 +428,26 @@ class AggressiveBot:
             logger.info(f"Recovered orphaned position: {p['type']} {p['volume']:.2f} @ {p['price_open']:.2f} ticket={p['ticket']}")
             self.telegram.alert_error(f"Recovered orphaned position: {p['type']} {p['volume']:.2f} @ {p['price_open']:.2f}")
 
-        self.telegram._send(
-            f"\U0001f916 <b>Aggressive M1 Scalper Bot Started</b>\n"
-            f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-            f"Symbol: {self.settings.symbol}\n"
-            f"Balance: ${account['balance']:.2f}\n"
-            f"Strategy: Zone + Momentum (M1) 50/50 + Trail\n"
-            f"Risk: {RISK_PCT}% | SL: {SL_PIPS}pips | Max/Day: {MAX_TRADES_PER_DAY}\n"
-            f"Filters: Spread={self.settings.max_spread}pips "
-            f"CB={self.settings.circuit_breaker_max_daily_loss_pct}% "
-            f"{'News ' if self.news_filter else ''}\n"
-            f"Running 24/5 Mon 00:00 to Fri 17:00 UTC\n"
-            f"Time: {fmt_et(fmt='%I:%M %p')}"
-        )
+        if self.telegram.health_check():
+            logger.info("Telegram connected — alerts enabled")
+            self.telegram._send(
+                f"\U0001f916 <b>Aggressive M1 Scalper Bot Started</b>\n"
+                f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+                f"Symbol: {self.settings.symbol}\n"
+                f"Balance: ${account['balance']:.2f}\n"
+                f"Strategy: Zone + Momentum (M1) 50/50 + Trail\n"
+                f"Risk: {RISK_PCT}% | SL: {SL_PIPS}pips | Max/Day: {MAX_TRADES_PER_DAY}\n"
+                f"Filters: Spread={self.settings.max_spread}pips "
+                f"CB={self.settings.circuit_breaker_max_daily_loss_pct}% "
+                f"{'News ' if self.news_filter else ''}\n"
+                f"Running 24/5 Mon 00:00 to Fri 17:00 UTC\n"
+                f"Time: {fmt_et(fmt='%I:%M %p')}"
+            )
+        else:
+            logger.warning(
+                "Telegram unreachable — alerts will not be delivered. "
+                "Check network/firewall: api.telegram.org:443 must be reachable."
+            )
         return True
 
     def shutdown(self) -> None:
@@ -455,7 +462,8 @@ class AggressiveBot:
             except Exception as e:
                 logger.error(f"Failed to close on shutdown: {e}")
 
-        self.telegram._send("\U0001f6ab <b>Aggressive M1 Scalper Bot Stopped</b>")
+        if self.telegram.health_check():
+            self.telegram._send("\U0001f6ab <b>Aggressive M1 Scalper Bot Stopped</b>")
         self.mongo.disconnect()
         self.connector.disconnect()
         self._running = False

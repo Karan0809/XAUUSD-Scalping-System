@@ -505,20 +505,27 @@ class ScalperBot:
             logger.info(f"Recovered orphaned position: {p['type']} {p['volume']:.2f} @ {p['price_open']:.2f} ticket={p['ticket']}")
             self.telegram.alert_error(f"Recovered orphaned position: {p['type']} {p['volume']:.2f} @ {p['price_open']:.2f}")
 
-        self.telegram._send(
-            f"\U0001f916 <b>ORB Scalper Bot Started</b>\n"
-            f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-            f"Symbol: {self.settings.symbol}\n"
-            f"Balance: ${account['balance']:.2f}\n"
-            f"Strategy: ORB + Safety Filters\n"
-            f"Risk: {risk_pct}% | Max/Day: {max_trd}\n"
-            f"Filters: Spread={self.settings.max_spread}pips "
-            f"Trail={self.settings.trail_multiplier}x "
-            f"CB={self.settings.circuit_breaker_max_daily_loss_pct}% "
-            f"{'News ' if self.news_filter else ''}\n"
-            f"Sessions: Asia (00-09) London (09-12) NY (13-16) UTC\n"
-            f"Time: {fmt_et(fmt='%I:%M %p')}"
-        )
+        if self.telegram.health_check():
+            logger.info("Telegram connected — alerts enabled")
+            self.telegram._send(
+                f"\U0001f916 <b>ORB Scalper Bot Started</b>\n"
+                f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+                f"Symbol: {self.settings.symbol}\n"
+                f"Balance: ${account['balance']:.2f}\n"
+                f"Strategy: ORB + Safety Filters\n"
+                f"Risk: {risk_pct}% | Max/Day: {max_trd}\n"
+                f"Filters: Spread={self.settings.max_spread}pips "
+                f"Trail={self.settings.trail_multiplier}x "
+                f"CB={self.settings.circuit_breaker_max_daily_loss_pct}% "
+                f"{'News ' if self.news_filter else ''}\n"
+                f"Sessions: Asia (00-09) London (09-12) NY (13-16) UTC\n"
+                f"Time: {fmt_et(fmt='%I:%M %p')}"
+            )
+        else:
+            logger.warning(
+                "Telegram unreachable — alerts will not be delivered. "
+                "Check network/firewall: api.telegram.org:443 must be reachable."
+            )
 
         return True
 
@@ -536,9 +543,10 @@ class ScalperBot:
             except Exception as e:
                 logger.error(f"Failed to close position on shutdown: {e}")
 
-        self.telegram._send(
-            f"\U0001f6ab <b>ORB Scalper Bot Stopped</b>"
-        )
+        if self.telegram.health_check():
+            self.telegram._send(
+                f"\U0001f6ab <b>ORB Scalper Bot Stopped</b>"
+            )
         self.mongo.disconnect()
         self.connector.disconnect()
         self._running = False
