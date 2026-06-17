@@ -141,13 +141,13 @@ class AggressiveBot:
                 if d < best_dist:
                     best_dist = d
                     direction = "buy"
-                    zone_sl = z.zone_low - 0.03
+                    zone_sl = z.zone_low - 0.15
             elif z.zone_type == "supply" and z.zone_low > price:
                 d = abs(price - (z.zone_high + z.zone_low) / 2.0)
                 if d < best_dist:
                     best_dist = d
                     direction = "sell"
-                    zone_sl = z.zone_high + 0.03
+                    zone_sl = z.zone_high + 0.15
         if direction and zone_sl is not None and abs(zone_sl - price) > 0.80:
             zone_sl = None
         return direction, zone_sl
@@ -157,6 +157,19 @@ class AggressiveBot:
             return bar["close"] > bar["open"] and bar["close"] > prev_close
         else:
             return bar["close"] < bar["open"] and bar["close"] < prev_close
+
+    def _check_trend(self) -> Optional[str]:
+        if self._df_15min is None or len(self._df_15min) < 25:
+            return None
+        close = self._df_15min["close"]
+        ema = close.ewm(span=20, adjust=False).mean()
+        if len(ema) < 3:
+            return None
+        if ema.iloc[-1] > ema.iloc[-3]:
+            return "bullish"
+        elif ema.iloc[-1] < ema.iloc[-3]:
+            return "bearish"
+        return None
 
     def _close_partial(self, lots: float, price: float, reason: str, current_time: datetime) -> None:
         pos = self._position
@@ -597,13 +610,26 @@ class AggressiveBot:
 
                     direction, zone_sl = self._get_zone_signal(bar["close"])
                     if direction and i >= 2:
+                        trend = self._check_trend()
+                        if trend is not None and ((direction == "buy" and trend != "bullish") or (direction == "sell" and trend != "bearish")):
+                            logger.debug(f"Trend filter blocked {direction} (M15 trend={trend})")
+                            time.sleep(60)
+                            continue
                         prev_close = rates.iloc[i - 1]["close"]
                         if self._check_momentum(bar, prev_close, direction):
                             balance = acct["balance"]
                             price = tick["ask"] if direction == "buy" else tick["bid"]
+                            MIN_SL_DIST = 0.30
                             if zone_sl is not None:
-                                sl = zone_sl
-                                actual_sl_dist = abs(sl - price)
+                                raw_dist = abs(zone_sl - price)
+                                actual_sl_dist = max(raw_dist, MIN_SL_DIST)
+                                if actual_sl_dist > 0.80:
+                                    sl = (tick["bid"] - SL_PRICE) if direction == "buy" else (tick["ask"] + SL_PRICE)
+                                    actual_sl_dist = SL_PRICE
+                                elif direction == "buy":
+                                    sl = price - actual_sl_dist
+                                else:
+                                    sl = price + actual_sl_dist
                             else:
                                 sl = (tick["bid"] - SL_PRICE) if direction == "buy" else (tick["ask"] + SL_PRICE)
                                 actual_sl_dist = SL_PRICE

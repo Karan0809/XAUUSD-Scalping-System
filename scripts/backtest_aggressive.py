@@ -53,6 +53,7 @@ class AggBacktestResult:
     news_filtered: int = 0
     zone_filtered: int = 0
     mom_filtered: int = 0
+    trend_filtered: int = 0
 
 
 def parse_args():
@@ -63,6 +64,11 @@ def parse_args():
     parser.add_argument("--risk", type=float, default=1.2, help="Risk percent per trade")
     parser.add_argument("--sl-pips", type=float, default=20.0, help="Fixed SL in pips")
     parser.add_argument("--max-trades", type=int, default=20, help="Max trades per day")
+    parser.add_argument("--no-trend-filter", action="store_true", help="Disable M15 trend filter")
+    parser.add_argument("--sl-mode", type=str, default="fixed", choices=["fixed", "min_sl", "atr"],
+                        help="SL mode: fixed (pips arg), min_sl (zone SL + 20pip min), atr (ATR*1.5)")
+    parser.add_argument("--zone-buffer", type=float, default=0.15,
+                        help="Buffer below/above zone edge for SL (default: 0.15 = 15 pips)")
     parser.add_argument("--output", type=str, default="aggressive_results.json")
     return parser.parse_args()
 
@@ -105,7 +111,16 @@ def load_m1_data(start: datetime, end: datetime) -> pd.DataFrame:
         df = df[~df.index.duplicated(keep="last")]
         df = df[(df.index >= start) & (df.index <= end)]
         logger.info(f"Loaded {len(df)} M1 bars")
-        return df[["open", "high", "low", "close", "tick_volume", "spread"]]
+
+        # Precompute ATR(14) for atr sl_mode
+        tr = pd.DataFrame({
+            "hl": df["high"] - df["low"],
+            "hc": (df["high"] - df["close"].shift(1)).abs(),
+            "lc": (df["low"] - df["close"].shift(1)).abs(),
+        })
+        df["atr"] = tr.max(axis=1).rolling(14).mean()
+
+        return df[["open", "high", "low", "close", "tick_volume", "spread", "atr"]]
     except Exception as e:
         logger.error(f"Failed to load M1 data: {e}")
         sys.exit(1)
@@ -154,10 +169,9 @@ def get_risk_amount(profit: float) -> float:
     return 10.0
 
 
-def calc_lot_size(balance: float, risk_pct: float, sl_pips: float, margin_rate: Optional[float] = None, profit: float = 0.0) -> float:
-    sl_price = sl_pips / 100.0
+def calc_lot_size(balance: float, risk_pct: float, sl_dist: float, margin_rate: Optional[float] = None, profit: float = 0.0) -> float:
     risk_amount = get_risk_amount(profit)
-    risk_lots = round(risk_amount / (sl_price * 100), 2)
+    risk_lots = round(risk_amount / (sl_dist * 100), 2)
     if margin_rate is not None and margin_rate > 0:
         margin_lots = max(0.01, round((balance * 0.9) / margin_rate, 2))
     else:
@@ -174,6 +188,17 @@ def check_momentum(bars: pd.DataFrame, direction: str) -> bool:
         return last["close"] > last["open"] and last["close"] > prev["close"]
     else:
         return last["close"] < last["open"] and last["close"] < prev["close"]
+
+
+def check_trend(df_15min: pd.DataFrame, m15_idx: int, direction: str) -> bool:
+    if "ema20" not in df_15min.columns or m15_idx < 3:
+        return True
+    ema = df_15min["ema20"]
+    if ema.iloc[m15_idx - 1] > ema.iloc[m15_idx - 3]:
+        return direction == "buy"
+    elif ema.iloc[m15_idx - 1] < ema.iloc[m15_idx - 3]:
+        return direction == "sell"
+    return True
 
 
 def print_results(result: AggBacktestResult, label: str = "AGGRESSIVE M1 SCALPER"):
@@ -195,7 +220,7 @@ def print_results(result: AggBacktestResult, label: str = "AGGRESSIVE M1 SCALPER
     print(f"  Largest Loss:      ${result.largest_loss:.2f}")
     print(f"  Avg Bars Held:     {result.avg_bars_held:.1f}")
     print(f"  Total Commission:  ${result.total_commission:.2f}")
-    print(f"  Filters:           Zone={result.zone_filtered} Mom={result.mom_filtered} Spread={result.spread_filtered} CB={result.cb_blocked} News={result.news_filtered}")
+    print(f"  Filters:           Zone={result.zone_filtered} Mom={result.mom_filtered} Trend={result.trend_filtered} Spread={result.spread_filtered} CB={result.cb_blocked} News={result.news_filtered}")
     print("=" * 60 + "\n")
 
 
@@ -217,6 +242,8 @@ def main():
     df_15min = load_15min_data(start, end)
 
     margin_rate = _fetch_margin_rate()
+
+    df_15min["ema20"] = df_15min["close"].ewm(span=20, adjust=False).mean()
 
     zone_detector = InstitutionalZoneDetector()
     zone_detector.build_historical(df_15min)
@@ -372,6 +399,7 @@ def main():
             # 1. Zone: find closest unbreached zone in the correct direction
             best_dist = float("inf")
             direction = None
+            zone_sl = None
             for z in zone_detector.zones:
                 if z.breached:
                     continue
@@ -380,11 +408,13 @@ def main():
                     if d < best_dist:
                         best_dist = d
                         direction = "buy"
+                        zone_sl = z.zone_low - args.zone_buffer
                 elif z.zone_type == "supply" and z.zone_low > price:
                     d = abs(price - (z.zone_high + z.zone_low) / 2.0)
                     if d < best_dist:
                         best_dist = d
                         direction = "sell"
+                        zone_sl = z.zone_high + args.zone_buffer
 
             if direction is None:
                 result.zone_filtered += 1
@@ -396,6 +426,11 @@ def main():
                 result.mom_filtered += 1
                 continue
 
+            # 3. Trend filter: M15 EMA(20) slope must align with direction
+            if not args.no_trend_filter and not check_trend(df_15min, m15_idx, direction):
+                result.trend_filtered += 1
+                continue
+
             if (i - last_entry_bar) < 3:
                 continue
             entry_price = price
@@ -403,14 +438,28 @@ def main():
                 entry_price += random.uniform(0.01, 0.02)
             else:
                 entry_price -= random.uniform(0.01, 0.02)
-            lot_size = calc_lot_size(balance, risk_pct, sl_pips, margin_rate, profit=balance - args.balance)
+
+            if args.sl_mode == "atr":
+                atr_val = bar["atr"]
+                sl_dist = max(atr_val * 1.5, sl_price) if pd.notna(atr_val) else sl_price
+            elif zone_sl is not None:
+                raw_sl_dist = abs(zone_sl - entry_price)
+                if raw_sl_dist > 0.80:
+                    sl_dist = sl_price
+                elif args.sl_mode == "min_sl":
+                    sl_dist = max(raw_sl_dist, 0.30)
+                else:
+                    sl_dist = raw_sl_dist
+            else:
+                sl_dist = sl_price
+
+            lot_size = calc_lot_size(balance, risk_pct, sl_dist, margin_rate, profit=balance - args.balance)
             if lot_size < 0.01:
                 continue
 
             last_entry_bar = i
             trades_today += 1
             cents = round(lot_size * 100)
-            sl_dist = sl_price
             sl_level = entry_price - sl_dist if direction == "buy" else entry_price + sl_dist
             tp1_c = int(cents * 0.5)
             tp2_c = cents - tp1_c
