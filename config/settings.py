@@ -40,7 +40,7 @@ class ScalperSettings:
     news_filter_enabled: bool = False
     news_blackout_minutes: int = 30
 
-    circuit_breaker_max_daily_loss_pct: float = 3.0
+    circuit_breaker_max_daily_loss_pct: float = 10.0
     circuit_breaker_max_consecutive_losses: int = 4
     circuit_breaker_max_drawdown_pct: float = 15.0
 

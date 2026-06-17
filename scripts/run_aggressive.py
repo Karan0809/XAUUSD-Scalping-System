@@ -406,6 +406,13 @@ class AggressiveBot:
         logger.info(f"Account: {account['login']}, Balance: ${account['balance']:.2f}")
         self._initial_balance = account["balance"]
 
+        try:
+            self.settings = self.settings.adjust_for_balance(account["balance"])
+        except ValueError as e:
+            logger.error(str(e))
+            self.telegram.alert_error(str(e))
+            return False
+
         existing = self.connector.get_positions(self.settings.symbol)
         if existing:
             p = existing[0]
@@ -574,7 +581,7 @@ class AggressiveBot:
                     acct = self.connector.get_account_info()
                     allowed, cb_reason = self.risk_mgr.check_entry_allowed(acct["balance"])
                     if not allowed:
-                        logger.debug(f"CB blocked: {cb_reason}")
+                        logger.warning(f"CB blocked: {cb_reason}")
                         if not self._cb_alerted:
                             self.telegram.alert_error(f"Circuit breaker blocked: {cb_reason}")
                             self._cb_alerted = True

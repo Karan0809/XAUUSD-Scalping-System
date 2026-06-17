@@ -472,12 +472,14 @@ class OpeningRangeScalp:
         current_time: datetime,
     ) -> Optional[Dict[str, Any]]:
         if not self._establish_opening_range(df_15min, current_time):
+            logger.debug("ORB: opening range not yet established")
             return None
 
         if self._market_structure is None:
             self._determine_market_structure(df_15min)
 
         if self._market_structure is None:
+            logger.debug("ORB: could not determine market structure (need >=10 M15 bars)")
             return None
 
         range_width = self._range_high - self._range_low
@@ -507,23 +509,28 @@ class OpeningRangeScalp:
                     "tp": tp,
                     "setup": "range_reversal",
                 }
+            logger.debug("ORB: ranging market, no reversal signal")
             return None
 
         htf_aligned, htf_dir = self._check_htf_alignment(df_15min) if not self._htf_aligned else (True, self._market_structure)
         if not htf_aligned:
+            logger.debug(f"ORB: HTF not aligned (market={self._market_structure}, htf={htf_dir})")
             return None
 
         expected_dir = "buy" if self._market_structure == "uptrend" else "sell"
 
         breakout = self._detect_breakout(df_5min)
         if breakout is None:
+            logger.debug("ORB: no breakout detected (no candle fully outside range)")
             return None
         breakout_dir, breakout_idx = breakout
 
         if breakout_dir != expected_dir:
+            logger.debug(f"ORB: breakout direction mismatch (got={breakout_dir}, expected={expected_dir})")
             return None
 
         if not self._check_swing_break(df_5min, breakout_dir):
+            logger.debug("ORB: swing break failed — recent swing not exceeded")
             return None
 
         best_zone = None
@@ -535,6 +542,7 @@ class OpeningRangeScalp:
 
         poi = self._find_poi(df_5min, df_5min.index[breakout_idx], breakout_dir)
         if poi is None and best_zone is None:
+            logger.debug("ORB: no POI and no zone found for pullback entry")
             return None
 
         pullback_poi = poi
@@ -550,10 +558,13 @@ class OpeningRangeScalp:
             entry_price = pullback["entry"]
             sl = pullback["sl"]
             if not self._check_slow_momentum(df_5min):
+                logger.debug("ORB: slow momentum check failed — candles too aggressive")
                 return None
             if not self._check_fib_discount(df_5min, entry_price, breakout_dir, pullback_poi):
+                logger.debug("ORB: fib discount check failed — entry not at discount")
                 return None
             if not self._check_reaction(df_5min, breakout_dir):
+                logger.debug("ORB: reaction check failed — no bullish/bearish confirmation")
                 return None
         else:
             fvg_entry = self._find_fvg_near_range(df_5min, breakout_dir)
@@ -565,6 +576,7 @@ class OpeningRangeScalp:
                     sl = self._range_low + 0.03
                 setup = "aggressive_fvg"
             else:
+                logger.debug("ORB: no pullback and no FVG near range — skipping")
                 return None
 
         max_zone_dist = 0.50
@@ -615,22 +627,26 @@ class OpeningRangeScalp:
         current_time: datetime,
     ) -> Optional[Dict[str, Any]]:
         if df_5min is None or len(df_5min) < 20 or self._zone_detector is None:
+            logger.debug("FREE: insufficient data (need >=20 M5 bars + zone detector)")
             return None
 
         current_price = df_5min["close"].iloc[-1]
 
         htf_aligned, htf_dir = self._check_htf_alignment(df_15min)
         if not htf_aligned:
+            logger.debug("FREE: HTF not aligned")
             return None
 
         direction = "buy" if htf_dir == "uptrend" else "sell"
 
         if not self._check_swing_break(df_5min, direction):
+            logger.debug("FREE: swing break failed")
             return None
 
         zone_dir = "demand" if direction == "buy" else "supply"
         best_zone = self._zone_detector.get_best_zone(zone_dir, current_price)
         if best_zone is None:
+            logger.debug(f"FREE: no {zone_dir} zone found near {current_price:.2f}")
             return None
 
         pullback_poi = (best_zone.zone_low, best_zone.zone_high)
@@ -647,10 +663,13 @@ class OpeningRangeScalp:
             entry_price = pullback["entry"]
             sl = pullback["sl"]
             if not self._check_slow_momentum(df_5min):
+                logger.debug("FREE: slow momentum failed")
                 return None
             if not self._check_fib_discount(df_5min, entry_price, direction, pullback_poi):
+                logger.debug("FREE: fib discount failed")
                 return None
             if not self._check_reaction(df_5min, direction):
+                logger.debug("FREE: reaction check failed")
                 return None
             setup = "free_pullback"
         elif fvg_entry is not None:
@@ -661,6 +680,7 @@ class OpeningRangeScalp:
                 sl = entry_price + max_free_sl
             setup = "free_fvg"
         else:
+            logger.debug("FREE: no pullback and no FVG — skipping")
             return None
 
         if direction == "buy":

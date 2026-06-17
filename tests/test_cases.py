@@ -1603,7 +1603,7 @@ class TestCircuitBreaker(unittest.TestCase):
         self.assertEqual(adj.circuit_breaker_max_daily_loss_pct, 20.0)
         self.assertEqual(adj.circuit_breaker_max_drawdown_pct, 50.0)
         self.assertEqual(adj.max_daily_trades, 5)
-        self.assertEqual(s.circuit_breaker_max_daily_loss_pct, 3.0,
+        self.assertEqual(s.circuit_breaker_max_daily_loss_pct, 10.0,
                          "Original must remain unchanged")
 
     def test_scaled_thresholds_medium_account(self):
@@ -1618,7 +1618,7 @@ class TestCircuitBreaker(unittest.TestCase):
         from config.settings import ScalperSettings
         s = ScalperSettings()
         adj = s.adjust_for_balance(2000.0)
-        self.assertEqual(adj.circuit_breaker_max_daily_loss_pct, 3.0)
+        self.assertEqual(adj.circuit_breaker_max_daily_loss_pct, 10.0)
         self.assertEqual(adj.circuit_breaker_max_drawdown_pct, 15.0)
         self.assertEqual(adj.max_daily_trades, 15)
 

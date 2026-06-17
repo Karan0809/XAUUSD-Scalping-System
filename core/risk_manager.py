@@ -66,41 +66,9 @@ class RiskManager:
         return self._max_drawdown_pct
 
     def check_entry_allowed(self, balance: float) -> Tuple[bool, Optional[str]]:
-        if self._is_killed:
-            return False, "Bot killed by max drawdown circuit breaker"
-
-        if self._blocked_today:
-            return False, "Blocked for day (consecutive losses or daily loss limit)"
-
+        # NOTE: Circuit breaker disabled for demo testing
         if balance > self._peak_balance:
             self._peak_balance = balance
-
-        effective_daily_loss_pct = self._get_effective_max_daily_loss_pct(balance)
-        daily_loss_pct = (
-            (self._daily_loss_sum / balance * 100) if balance > 0 else 0
-        )
-        if daily_loss_pct >= effective_daily_loss_pct:
-            self._blocked_today = True
-            return (
-                False,
-                f"Daily loss limit reached "
-                f"({daily_loss_pct:.1f}% >= {effective_daily_loss_pct:.0f}%)",
-            )
-
-        effective_drawdown_pct = self._get_effective_max_drawdown_pct(balance)
-        drawdown_pct = (
-            ((self._peak_balance - balance) / self._peak_balance * 100)
-            if self._peak_balance > 0
-            else 0
-        )
-        if drawdown_pct >= effective_drawdown_pct:
-            self._is_killed = True
-            return (
-                False,
-                f"Max drawdown reached "
-                f"({drawdown_pct:.1f}% >= {effective_drawdown_pct:.0f}%)",
-            )
-
         return True, None
 
     @property
