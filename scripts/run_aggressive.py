@@ -205,6 +205,12 @@ class AggressiveBot:
             try:
                 positions = self.connector.get_positions(self.settings.symbol)
                 still_open = any(p["ticket"] == ticket for p in positions)
+                if not still_open and positions:
+                    logger.warning(
+                        f"Position {ticket} no longer on MT5. "
+                        f"Open tickets: {[p['ticket'] for p in positions]}. "
+                        f"Pos entry={pos.get('entry'):.2f} sl={pos.get('sl'):.2f}"
+                    )
             except Exception:
                 still_open = True
             if not still_open:
@@ -584,9 +590,14 @@ class AggressiveBot:
                                         tp=tp,
                                         comment="AGGR",
                                     )
+                                    if not order.get("ticket"):
+                                        logger.error("Order placed but got no ticket")
+                                        self.telegram.alert_error("Order placed but got no ticket")
+                                        continue
+                                    filled_lot = order.get("volume", lot_size)
                                     self._trades_today += 1
                                     trade_id = str(uuid4())
-                                    cents = round(lot_size * 100)
+                                    cents = round(filled_lot * 100)
                                     tp1_l = int(cents * 0.5) / 100.0
                                     actual_sl = order.get("sl", sl)
                                     actual_tp = order.get("tp", tp)
@@ -596,10 +607,11 @@ class AggressiveBot:
                                         "sl": actual_sl,
                                         "tp": actual_tp,
                                         "original_sl": actual_sl,
+                                        "lot_size": filled_lot,
+                                        "original_lot_size": filled_lot,
                                         "tag": "AGGR",
                                         "tp1_lots": tp1_l,
-                                        "remaining_lots": lot_size,
-                                        "original_lot_size": lot_size,
+                                        "remaining_lots": filled_lot,
                                         "pnl": 0.0,
                                         "tp1_hit": False,
                                         "trailing_activated": False,
@@ -617,18 +629,19 @@ class AggressiveBot:
                                         "entry_price": order["price"],
                                         "stop_loss": actual_sl,
                                         "take_profit": actual_tp,
-                                        "lot_size": lot_size,
+                                        "lot_size": filled_lot,
                                         "session_date": current_time.strftime("%Y-%m-%d"),
                                         "open_time": current_time,
                                         "strategy": "aggressive_m1",
                                     })
                                     logger.info(
                                         f"AGGR TRADE {direction.upper()} "
-                                        f"{lot_size} @ {order['price']:.2f} "
-                                        f"SL={actual_sl:.2f} TP={actual_tp:.2f}"
+                                        f"{filled_lot} @ {order['price']:.2f} "
+                                        f"SL={actual_sl:.2f} TP={actual_tp:.2f} "
+                                        f"ticket={order['ticket']}"
                                     )
                                     trade_logger.info(
-                                        f"OPEN {direction.upper()} {lot_size} "
+                                        f"OPEN {direction.upper()} {filled_lot} "
                                         f"{order['price']:.2f} {actual_sl:.2f} {actual_tp:.2f}",
                                         extra={"trade": self._position},
                                     )

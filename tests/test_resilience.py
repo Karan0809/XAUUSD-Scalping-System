@@ -27,6 +27,7 @@ class FakeMT5Result:
     order = 1001
     deal = 1001
     price = 2330.0
+    volume = 0.5
     comment = ""
 
 

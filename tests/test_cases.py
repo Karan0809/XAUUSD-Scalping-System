@@ -1928,7 +1928,7 @@ class TestTradeLoggingConsistency(unittest.TestCase):
 
     def test_entry_log_format_aggressive(self):
         section = self._get_file_lines("scripts/run_aggressive.py",
-                                       'f"AGGR TRADE {direction', context=400)
+                                       'f"AGGR TRADE {direction', context=500)
         self.assertIn('f"AGGR TRADE {direction.upper()}', section)
         self.assertIn('trade_logger.info(', section)
         self.assertIn("OPEN", section)

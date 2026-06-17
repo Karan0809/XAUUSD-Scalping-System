@@ -303,7 +303,7 @@ class MT5Connector:
                 error = mt5.last_error()
                 logger.error(f"Order send failed: {error}")
                 raise MT5ConnectorError(f"Order send failed: {error}")
-            if result.retcode in (0, 1, 10008, 10009):
+            if result.retcode == 0:
                 break
             if attempt == 0 and result.retcode == 10016:
                 logger.warning(f"Order rejected (10016), retrying with fresh tick...")
@@ -335,16 +335,18 @@ class MT5Connector:
                 f"comment={result.comment}"
             )
 
+        ticket = result.order if result.order != 0 else result.deal
         logger.info(
             f"Order placed: {order_type_str} {volume} {symbol} "
             f"@{result.price}, SL={request['sl']:.2f}, TP={request['tp']:.2f}, "
-            f"deal={result.deal}"
+            f"deal={result.deal} order={result.order} ticket={ticket}"
         )
         return {
-            "ticket": result.deal or result.order,
+            "ticket": ticket,
             "deal": result.deal,
+            "order": result.order,
             "price": result.price,
-            "volume": volume,
+            "volume": result.volume or volume,
             "type": order_type_str,
             "comment": comment,
             "sl": request["sl"],
@@ -495,9 +497,13 @@ class MT5Connector:
         }
 
         result = mt5.order_send(request)
-        if result is not None and result.retcode in (0, 1, 10008, 10009):
-            logger.info(f"Position {ticket} modified: SL={sl}, TP={tp} retcode={result.retcode}")
+        if result is not None and result.retcode == 0:
+            logger.info(f"Position {ticket} modified: SL={sl}, TP={tp}")
             return True
+        logger.error(
+            f"Modify position failed: retcode={result.retcode if result is not None else 'None'}"
+        )
         error = mt5.last_error()
-        logger.error(f"Modify position failed: retcode={result.retcode if result is not None else 'None'}, error={error}")
+        if error:
+            logger.error(f"MT5 error: {error}")
         return False

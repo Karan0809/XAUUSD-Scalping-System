@@ -211,6 +211,7 @@ Trades 24/5 on zone+momentum confluence with fixed 20-pip SL. No session awarene
 | **SL updated before broker modify confirms** | TP1 set `pos["sl"] = entry` *before* calling `modify_position()`. If the broker rejected the modify, local SL was at entry while broker had original SL — premature close on next bar. Fixed by moving SL update into `if ok:` branch in both bots. |
 | **Telegram heartbeat fires immediately on startup** | `_last_heartbeat` initialized to `0`, so the first loop iteration sent heartbeat immediately — blocked startup for 20s (2 chat IDs × 10s timeout). Fixed by initializing to `time.time()`. |
 | **Telegram 10s timeout blocks bot** | When `api.telegram.org` was unreachable, each HTTP request blocked for 10s — 20s per heartbeat cycle. Fixed by reducing timeout to 5s and adding exponential backoff (2^failures up to 5min) with `WARNING`-level logging. |
+| **Ticket mismatch — deal vs position** | `place_order` returned `result.deal` (deal ticket) as the position ticket, but `get_positions()` returns `pos.ticket` (position ticket). These are different IDs in MT5 — the stale ticket check `p["ticket"] == ticket` never matched, so every trade was immediately treated as "no longer on MT5" within 30s, and `get_position_close_from_history` couldn't find closing deals. Fixed by using `result.order` (order ticket = position ticket for new market orders). Also narrowed `retcode` success to `== 0` only (was accepting `retcode=1`/rejected as success), and returns actual filled volume from `result.volume`. |
 
 ## Project Structure
 
