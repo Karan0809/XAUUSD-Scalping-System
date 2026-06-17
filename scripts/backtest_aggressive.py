@@ -16,6 +16,7 @@ import pandas as pd
 import numpy as np
 
 from config.settings import get_settings
+from config.sessions import SessionTimes
 from log_utils.logger_setup import setup_logging
 from core.institutional_zone import InstitutionalZoneDetector
 from core.risk_manager import RiskManager
@@ -65,6 +66,7 @@ def parse_args():
     parser.add_argument("--sl-pips", type=float, default=20.0, help="Fixed SL in pips")
     parser.add_argument("--max-trades", type=int, default=20, help="Max trades per day")
     parser.add_argument("--no-trend-filter", action="store_true", help="Disable M15 trend filter")
+    parser.add_argument("--session-filter", action="store_true", help="Only trade during London (9-12) and NY (13-16) sessions")
     parser.add_argument("--sl-mode", type=str, default="fixed", choices=["fixed", "min_sl", "atr"],
                         help="SL mode: fixed (pips arg), min_sl (zone SL + 20pip min), atr (ATR*1.5)")
     parser.add_argument("--zone-buffer", type=float, default=0.15,
@@ -385,6 +387,9 @@ def main():
             allowed, cb_reason = risk_mgr.check_entry_allowed(balance)
             if not allowed:
                 result.cb_blocked += 1
+                continue
+
+            if args.session_filter and not SessionTimes().is_trade_window(current_time):
                 continue
 
             if news_filter is not None:

@@ -30,6 +30,49 @@ _MARGIN_RATE: Optional[float] = None
 
 
 @dataclass
+class SubResult:
+    total_trades: int = 0
+    winning_trades: int = 0
+    losing_trades: int = 0
+    total_profit: float = 0.0
+    avg_win: float = 0.0
+    avg_loss: float = 0.0
+    largest_win: float = 0.0
+    largest_loss: float = 0.0
+    trades: List[Dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def win_rate(self) -> float:
+        return round((self.winning_trades / self.total_trades * 100), 2) if self.total_trades > 0 else 0.0
+
+    @property
+    def profit_factor(self) -> float:
+        gross_profit = sum(t["pnl"] for t in self.trades if t["pnl"] > 0)
+        gross_loss = abs(sum(t["pnl"] for t in self.trades if t["pnl"] < 0))
+        return round(gross_profit / gross_loss, 2) if gross_loss > 0 else float("inf")
+
+    def record(self, trade: dict):
+        pnl = trade["pnl"]
+        self.total_trades += 1
+        self.trades.append(trade)
+        if pnl > 0:
+            self.winning_trades += 1
+            self.avg_win += pnl
+            self.largest_win = max(self.largest_win, pnl)
+        else:
+            self.losing_trades += 1
+            self.avg_loss += pnl
+            self.largest_loss = min(self.largest_loss, pnl)
+
+    def finalize(self):
+        if self.winning_trades > 0:
+            self.avg_win = round(self.avg_win / self.winning_trades, 2)
+        if self.losing_trades > 0:
+            self.avg_loss = round(self.avg_loss / self.losing_trades, 2)
+        self.total_profit = round(sum(t["pnl"] for t in self.trades), 2)
+
+
+@dataclass
 class BacktestResult:
     total_trades: int = 0
     winning_trades: int = 0
@@ -54,6 +97,7 @@ class BacktestResult:
     cb_blocked: int = 0
     news_filtered: int = 0
     recovery_trades: int = 0
+    orb: SubResult = field(default_factory=SubResult)
 
 
 def parse_args():
@@ -192,9 +236,25 @@ def calc_lot_size(balance: float, entry: float, sl: float, risk_pct: float, marg
     return max(0.01, round(min(risk_lots, margin_lots, 0.5), 2))
 
 
-def print_results(result: BacktestResult):
+def print_sub_result(label: str, sub: SubResult):
+    if sub.total_trades == 0:
+        return
+    sub.finalize()
+    print(f"  --- {label} ---")
+    print(f"    Trades:       {sub.total_trades}")
+    print(f"    Win Rate:     {sub.win_rate:.2f}%")
+    print(f"    Profit:       ${sub.total_profit:.2f}")
+    print(f"    Profit Fact:  {sub.profit_factor:.2f}")
+    print(f"    Avg Win:      ${sub.avg_win:.2f}")
+    print(f"    Avg Loss:     ${sub.avg_loss:.2f}")
+    print(f"    Largest Win:  ${sub.largest_win:.2f}")
+    print(f"    Largest Loss: ${sub.largest_loss:.2f}")
+    print()
+
+
+def print_results(result: BacktestResult, label: str = ""):
     print("\n" + "=" * 60)
-    print("  ORB SCALPER BACKTEST RESULTS")
+    print(f"  ORB SCALPER BACKTEST RESULTS {label}")
     print("=" * 60)
     print(f"  Total Trades:      {result.total_trades}")
     print(f"  Winning Trades:    {result.winning_trades}")
@@ -213,7 +273,8 @@ def print_results(result: BacktestResult):
     print(f"  Total Commission:  ${result.total_commission:.2f}")
     print(f"  Recovery Trades:   {result.recovery_trades}")
     print(f"  Filters:           Spread={result.spread_filtered} CB={result.cb_blocked} News={result.news_filtered}")
-    print("=" * 60 + "\n")
+    print("=" * 60)
+    print_sub_result("ORB Trades", result.orb)
 
 
 def main():
@@ -386,6 +447,11 @@ def main():
 
             if was_open and position["remaining_cents"] <= 0:
                 pnl = position["pnl"]
+                setup = position.get("setup", "unknown")
+                trade_data = {
+                    "type": position["type"], "entry": position["entry"],
+                    "pnl": round(pnl, 2), "setup": setup,
+                }
                 result.total_trades += 1
                 if pnl > 0:
                     result.winning_trades += 1
@@ -396,7 +462,9 @@ def main():
                     result.avg_loss += pnl
                     result.largest_loss = min(result.largest_loss, pnl)
                     recovery_available = True
+                result.orb.record(trade_data)
                 risk_mgr.record_trade(pnl)
+                orb.reset_entry()
                 position = None
 
         elif trades_today < settings.max_daily_trades:
@@ -458,6 +526,7 @@ def main():
                         "type": signal["direction"],
                         "entry": entry_price,
                         "sl": sl,
+                        "setup": signal.get("setup", ""),
                         "remaining_cents": cents,
                         "tp1_cents": tp1_c,
                         "tp2_cents": tp2_c,

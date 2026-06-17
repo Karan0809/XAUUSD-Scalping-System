@@ -33,6 +33,9 @@ class ScalperBot:
     POLL_INTERVAL_SECONDS = 30
     M15_REFRESH_SECONDS = 300
     HEARTBEAT_SECONDS = 21600
+    SL_PIPS = 50
+    SL_PRICE = SL_PIPS / 100.0
+    MIN_SL_DIST = 0.30
 
     def __init__(self, env_file: str = ".env"):
         self.env_file = env_file
@@ -133,6 +136,19 @@ class ScalperBot:
             margin_lots = 10.0
 
         return max(0.01, round(min(risk_lots, margin_lots, 10.0), 2))
+
+    def _check_trend(self) -> Optional[str]:
+        if self._df_15min is None or len(self._df_15min) < 25:
+            return None
+        close = self._df_15min["close"]
+        ema = close.ewm(span=20, adjust=False).mean()
+        if len(ema) < 3:
+            return None
+        if ema.iloc[-1] > ema.iloc[-3]:
+            return "bullish"
+        elif ema.iloc[-1] < ema.iloc[-3]:
+            return "bearish"
+        return None
 
     def _close_partial(self, lots: float, price: float, reason: str, current_time: datetime) -> None:
         pos = self._position
@@ -661,31 +677,59 @@ class ScalperBot:
                         signal = self.orb.analyze(window_df, df_15min_window, current_time, session=current_session)
 
                         if signal is not None:
+                            trend = self._check_trend()
+                            if trend is not None and ((signal["direction"] == "buy" and trend != "bullish") or (signal["direction"] == "sell" and trend != "bearish")):
+                                logger.debug(f"Trend filter blocked {signal['direction']} ORB (M15 trend={trend})")
+                                time.sleep(60)
+                                continue
+
                             balance = self.connector.get_account_info()["balance"]
-                            lot_size = self._calc_lot_size(
-                                signal["entry"], signal["sl"], balance
-                            )
+                            tick = self.connector.get_tick()
+                            price = tick["ask"] if signal["direction"] == "buy" else tick["bid"]
+
+                            best_dist = float("inf")
+                            zone_sl = None
+                            for z in self.zone_detector.zones:
+                                if z.breached:
+                                    continue
+                                if signal["direction"] == "buy" and z.zone_type == "demand" and z.zone_high < price:
+                                    d = abs(price - (z.zone_high + z.zone_low) / 2.0)
+                                    if d < best_dist:
+                                        best_dist = d
+                                        zone_sl = z.zone_low - 0.15
+                                elif signal["direction"] == "sell" and z.zone_type == "supply" and z.zone_low > price:
+                                    d = abs(price - (z.zone_high + z.zone_low) / 2.0)
+                                    if d < best_dist:
+                                        best_dist = d
+                                        zone_sl = z.zone_high + 0.15
+
+                            if zone_sl is not None:
+                                raw_dist = abs(zone_sl - price)
+                                sl_dist = max(raw_dist, self.MIN_SL_DIST)
+                                if sl_dist > 0.80:
+                                    sl_dist = self.SL_PRICE
+                            else:
+                                sl_dist = self.SL_PRICE
+
+                            tp_dist = abs(signal["entry"] - signal["tp"])
+                            lot_size = self._calc_lot_size(price, price - sl_dist if signal["direction"] == "buy" else price + sl_dist, balance)
 
                             if lot_size >= 0.01:
                                 mt5_type = mt5.ORDER_TYPE_BUY if signal["direction"] == "buy" else mt5.ORDER_TYPE_SELL
 
-                                tick = self.connector.get_tick()
                                 spread_pips = tick["spread"]
                                 if spread_pips > self.settings.max_spread:
                                     logger.debug(f"Spread too high: {spread_pips} > {self.settings.max_spread}")
                                     time.sleep(10)
                                     continue
 
-                                sl_dist = abs(signal["entry"] - signal["sl"])
-                                tp_dist = abs(signal["entry"] - signal["tp"])
-
                                 if signal["direction"] == "buy":
                                     entry_price = tick["ask"]
-                                    new_sl = tick["bid"] - sl_dist
+                                    new_sl = entry_price - sl_dist
                                     new_tp = entry_price + tp_dist
                                 else:
                                     entry_price = tick["bid"]
-                                    new_sl = tick["ask"] + sl_dist
+                                    new_sl = entry_price + sl_dist
                                     new_tp = entry_price - tp_dist
 
                                 try:

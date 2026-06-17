@@ -560,9 +560,6 @@ class OpeningRangeScalp:
             if not self._check_slow_momentum(df_5min):
                 logger.debug("ORB: slow momentum check failed — candles too aggressive")
                 return None
-            if not self._check_fib_discount(df_5min, entry_price, breakout_dir, pullback_poi):
-                logger.debug("ORB: fib discount check failed — entry not at discount")
-                return None
             if not self._check_reaction(df_5min, breakout_dir):
                 logger.debug("ORB: reaction check failed — no bullish/bearish confirmation")
                 return None
@@ -620,109 +617,6 @@ class OpeningRangeScalp:
             "zone_id": id(best_zone) if best_zone else None,
         }
 
-    def _run_free_trade(
-        self,
-        df_5min: pd.DataFrame,
-        df_15min: pd.DataFrame,
-        current_time: datetime,
-    ) -> Optional[Dict[str, Any]]:
-        if df_5min is None or len(df_5min) < 20 or self._zone_detector is None:
-            logger.debug("FREE: insufficient data (need >=20 M5 bars + zone detector)")
-            return None
-
-        current_price = df_5min["close"].iloc[-1]
-
-        htf_aligned, htf_dir = self._check_htf_alignment(df_15min)
-        if not htf_aligned:
-            logger.debug("FREE: HTF not aligned")
-            return None
-
-        direction = "buy" if htf_dir == "uptrend" else "sell"
-
-        if not self._check_swing_break(df_5min, direction):
-            logger.debug("FREE: swing break failed")
-            return None
-
-        zone_dir = "demand" if direction == "buy" else "supply"
-        best_zone = self._zone_detector.get_best_zone(zone_dir, current_price)
-        if best_zone is None:
-            logger.debug(f"FREE: no {zone_dir} zone found near {current_price:.2f}")
-            return None
-
-        pullback_poi = (best_zone.zone_low, best_zone.zone_high)
-
-        fvg_entry = self._find_fvg_anywhere(df_5min, direction)
-
-        pullback = self._check_pullback(df_5min, pullback_poi, direction)
-        entry_price = None
-        sl = None
-        setup = None
-
-        max_free_sl = 1.00
-        if pullback is not None:
-            entry_price = pullback["entry"]
-            sl = pullback["sl"]
-            if not self._check_slow_momentum(df_5min):
-                logger.debug("FREE: slow momentum failed")
-                return None
-            if not self._check_fib_discount(df_5min, entry_price, direction, pullback_poi):
-                logger.debug("FREE: fib discount failed")
-                return None
-            if not self._check_reaction(df_5min, direction):
-                logger.debug("FREE: reaction check failed")
-                return None
-            setup = "free_pullback"
-        elif fvg_entry is not None:
-            entry_price = fvg_entry
-            if direction == "buy":
-                sl = entry_price - max_free_sl
-            else:
-                sl = entry_price + max_free_sl
-            setup = "free_fvg"
-        else:
-            logger.debug("FREE: no pullback and no FVG — skipping")
-            return None
-
-        if direction == "buy":
-            zone_sl = best_zone.zone_low - 0.03
-            zone_dist = abs(entry_price - zone_sl)
-            if zone_dist <= max_free_sl:
-                sl = zone_sl if sl is None else max(sl, zone_sl)
-        else:
-            zone_sl = best_zone.zone_high + 0.03
-            zone_dist = abs(entry_price - zone_sl)
-            if zone_dist <= max_free_sl:
-                sl = zone_sl if sl is None else min(sl, zone_sl)
-
-        # Ensure minimum SL for breathing room
-        if sl is not None:
-            if direction == "buy":
-                sl = min(sl, entry_price - max_free_sl)
-            else:
-                sl = max(sl, entry_price + max_free_sl)
-
-        sl_distance = abs(entry_price - sl)
-        if sl_distance < 0.01:
-            return None
-        if direction == "buy":
-            tp = entry_price + sl_distance * 10.0
-        else:
-            tp = entry_price - sl_distance * 10.0
-
-        logger.info(
-            f"Free trade {direction.upper()} at {entry_price:.2f} "
-            f"SL={sl:.2f} TP={tp:.2f} ({setup}) zone={best_zone.zone_low:.2f}-{best_zone.zone_high:.2f}"
-        )
-        return {
-            "type": "opening_range_scalp",
-            "direction": direction,
-            "entry": entry_price,
-            "sl": sl,
-            "tp": tp,
-            "setup": setup,
-            "zone_id": id(best_zone),
-        }
-
     def analyze(
         self,
         df_5min: pd.DataFrame,
@@ -747,10 +641,5 @@ class OpeningRangeScalp:
             if signal is not None:
                 self._entry_triggered = True
                 return signal
-
-        signal = self._run_free_trade(df_5min, df_15min, current_time)
-        if signal is not None:
-            self._entry_triggered = True
-            return signal
 
         return None
