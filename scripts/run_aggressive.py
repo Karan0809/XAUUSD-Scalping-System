@@ -114,9 +114,20 @@ class AggressiveBot:
             return 15.0
         return 10.0
 
-    def _calc_lot_size(self, balance: float) -> float:
+    def _calc_sl_distance(self, rates: pd.DataFrame) -> float:
+        prev = rates.iloc[-15:]
+        tr_values = []
+        for i in range(1, len(prev)):
+            hl = prev.iloc[i]["high"] - prev.iloc[i]["low"]
+            hc = abs(prev.iloc[i]["high"] - prev.iloc[i - 1]["close"])
+            lc = abs(prev.iloc[i]["low"] - prev.iloc[i - 1]["close"])
+            tr_values.append(max(hl, hc, lc))
+        atr = sum(tr_values) / len(tr_values) if tr_values else SL_PRICE
+        return max(atr * 1.5, SL_PRICE)
+
+    def _calc_lot_size(self, balance: float, sl_price: float = SL_PRICE) -> float:
         risk_amount = self._get_risk_amount(balance)
-        return max(0.01, min(round(risk_amount / (SL_PRICE * 100), 2), 10.0))
+        return max(0.01, min(round(risk_amount / (sl_price * 100), 2), 10.0))
 
     def _is_within_zone(self, price: float):
         best_dist = float("inf")
@@ -204,12 +215,18 @@ class AggressiveBot:
             try:
                 positions = self.connector.get_positions(self.settings.symbol)
                 still_open = any(p["ticket"] == ticket for p in positions)
-                if not still_open and positions:
-                    logger.warning(
-                        f"Position {ticket} no longer on MT5. "
-                        f"Open tickets: {[p['ticket'] for p in positions]}. "
-                        f"Pos entry={pos.get('entry'):.2f} sl={pos.get('sl'):.2f}"
-                    )
+                if not still_open:
+                    if positions:
+                        logger.warning(
+                            f"Position {ticket} no longer on MT5. "
+                            f"Open tickets: {[p['ticket'] for p in positions]}. "
+                            f"Pos entry={pos.get('entry'):.2f} sl={pos.get('sl'):.2f}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Position {ticket} no longer on MT5 (no open positions on symbol). "
+                            f"Pos entry={pos.get('entry'):.2f} sl={pos.get('sl'):.2f}"
+                        )
             except Exception:
                 still_open = True
             if not still_open:
@@ -571,12 +588,13 @@ class AggressiveBot:
                         prev_close = rates.iloc[i - 1]["close"]
                         if self._check_momentum(bar, prev_close, direction):
                             balance = acct["balance"]
-                            lot_size = self._calc_lot_size(balance)
+                            sl_dist = self._calc_sl_distance(rates)
+                            lot_size = self._calc_lot_size(balance, sl_dist)
                             if lot_size >= 0.01:
                                 mt5_type = mt5.ORDER_TYPE_BUY if direction == "buy" else mt5.ORDER_TYPE_SELL
                                 price = tick["ask"] if direction == "buy" else tick["bid"]
-                                sl = (tick["bid"] - SL_PRICE) if direction == "buy" else (tick["ask"] + SL_PRICE)
-                                tp = (price + SL_PRICE * 25) if direction == "buy" else (price - SL_PRICE * 25)
+                                sl = (tick["bid"] - sl_dist) if direction == "buy" else (tick["ask"] + sl_dist)
+                                tp = (price + sl_dist * 25) if direction == "buy" else (price - sl_dist * 25)
 
                                 try:
                                     order = self.connector.place_order(

@@ -335,20 +335,32 @@ class MT5Connector:
                 f"comment={result.comment}"
             )
 
-        # Find actual position ticket from MT5 for downstream operations
+        # Find actual position ticket from MT5 — retry since position may not appear immediately
         ticket = result.order if result.order != 0 else result.deal
-        try:
-            positions = mt5.positions_get(symbol=symbol)
-            if positions:
-                matching = [p for p in positions if p.magic == magic and abs(p.price_open - result.price) < 1.0]
-                if matching:
-                    matching.sort(key=lambda p: p.time, reverse=True)
-                    ticket = matching[0].ticket
-        except Exception:
-            pass
+        actual_sl = request["sl"]
+        for p_attempt in range(3):
+            try:
+                positions = mt5.positions_get(symbol=symbol)
+                if positions:
+                    matching = [p for p in positions if p.magic == magic and abs(p.price_open - result.price) < 1.0]
+                    if matching:
+                        matching.sort(key=lambda p: p.time, reverse=True)
+                        ticket = matching[0].ticket
+                        actual_sl = matching[0].sl
+                        if abs(actual_sl - request["sl"]) > 0.001:
+                            logger.warning(
+                                f"Broker SL mismatch: requested={request['sl']:.2f} actual={actual_sl:.2f} "
+                                f"(diff={abs(actual_sl - request['sl']):.2f})"
+                            )
+                        break
+            except Exception:
+                pass
+            if p_attempt < 2:
+                time.sleep(0.5)
         logger.info(
             f"Order placed: {order_type_str} {volume} {symbol} "
-            f"@{result.price}, SL={request['sl']:.2f}, TP={request['tp']:.2f}, "
+            f"@{result.price}, SL={request['sl']:.2f}, actual_SL={actual_sl:.2f}, "
+            f"TP={request['tp']:.2f}, "
             f"deal={result.deal} order={result.order} pos_ticket={ticket}"
         )
         return {
@@ -359,7 +371,7 @@ class MT5Connector:
             "volume": result.volume or volume,
             "type": order_type_str,
             "comment": comment,
-            "sl": request["sl"],
+            "sl": actual_sl,
             "tp": request["tp"],
         }
 
