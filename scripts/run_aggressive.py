@@ -14,7 +14,7 @@ import pandas as pd
 import MetaTrader5 as mt5
 
 from config.settings import get_settings
-from config.sessions import SessionValidator
+from config.sessions import SessionTimes, SessionValidator
 from log_utils.logger_setup import setup_logging, get_logger
 from core.institutional_zone import InstitutionalZoneDetector
 from core.risk_manager import RiskManager
@@ -159,17 +159,38 @@ class AggressiveBot:
             return bar["close"] < bar["open"] and bar["close"] < prev_close
 
     def _check_trend(self) -> Optional[str]:
-        if self._df_15min is None or len(self._df_15min) < 25:
+        df = self._df_15min
+        if df is None or len(df) < 100:
             return None
-        close = self._df_15min["close"]
-        ema = close.ewm(span=20, adjust=False).mean()
-        if len(ema) < 3:
+        close = df["close"]
+        ema50 = close.ewm(span=50, adjust=False).mean()
+        if len(ema50) < 50 or pd.isna(ema50.iloc[-1]):
             return None
-        if ema.iloc[-1] > ema.iloc[-3]:
-            return "bullish"
-        elif ema.iloc[-1] < ema.iloc[-3]:
-            return "bearish"
-        return None
+        current_price = close.iloc[-1]
+        above_ema = current_price > ema50.iloc[-1]
+        below_ema = current_price < ema50.iloc[-1]
+
+        recent = df.tail(20)
+        highs = recent["high"].values
+        lows = recent["low"].values
+
+        swing_highs = []
+        swing_lows = []
+        for i in range(2, len(highs) - 2):
+            if highs[i] > highs[i-1] and highs[i] > highs[i-2] and highs[i] > highs[i+1] and highs[i] > highs[i+2]:
+                swing_highs.append(highs[i])
+            if lows[i] < lows[i-1] and lows[i] < lows[i-2] and lows[i] < lows[i+1] and lows[i] < lows[i+2]:
+                swing_lows.append(lows[i])
+
+        if above_ema and len(swing_highs) >= 2 and len(swing_lows) >= 2:
+            if swing_highs[-1] > swing_highs[-2] and swing_lows[-1] > swing_lows[-2]:
+                return "bullish"
+
+        if below_ema and len(swing_highs) >= 2 and len(swing_lows) >= 2:
+            if swing_highs[-1] < swing_highs[-2] and swing_lows[-1] < swing_lows[-2]:
+                return "bearish"
+
+        return "ranging"
 
     def _close_partial(self, lots: float, price: float, reason: str, current_time: datetime) -> None:
         pos = self._position
@@ -558,6 +579,10 @@ class AggressiveBot:
                     continue
 
                 self._check_new_day()
+
+                if not SessionValidator.is_valid_session_day(now) or not SessionTimes().is_trade_window(now):
+                    time.sleep(60)
+                    continue
 
                 if time.time() - self._m15_last_refresh > self.M15_REFRESH_SECONDS:
                     self._load_15min_data()

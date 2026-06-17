@@ -32,7 +32,7 @@ class SessionTimes:
         return self.ny_open <= t < self.ny_trade_end
 
     def is_trade_window(self, dt: datetime) -> bool:
-        return self.is_london_trade_window(dt) or self.is_ny_trade_window(dt)
+        return self.is_asia(dt) or self.is_london_trade_window(dt) or self.is_ny_trade_window(dt)
 
     def is_trading_hours(self, dt: datetime) -> bool:
         t = dt.time()
