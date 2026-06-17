@@ -468,27 +468,29 @@ class MT5Connector:
 
     def get_position_close_from_history(self, ticket: int) -> Optional[Dict[str, Any]]:
         from_dt = datetime.now(timezone.utc) - timedelta(days=7)
-        to_dt = datetime.now(timezone.utc)
-        deals = mt5.history_deals_get(from_dt, to_dt)
-        if deals is None or len(deals) == 0:
-            logger.warning(f"No deals found in history for ticket {ticket}")
-            return None
-        exit_deals = []
-        for d in deals:
-            if d.entry == 1:
-                exit_deals.append(d)
-        matching = [d for d in exit_deals if d.position_id == ticket]
-        if not matching:
+        for attempt in range(3):
+            to_dt = datetime.now(timezone.utc)
+            deals = mt5.history_deals_get(from_dt, to_dt)
+            if deals is None or len(deals) == 0:
+                logger.warning(f"No deals found in history for ticket {ticket} (attempt {attempt+1}/3)")
+                time.sleep(1)
+                continue
+            exit_deals = []
+            for d in deals:
+                if d.entry == 1:
+                    exit_deals.append(d)
+            matching = [d for d in exit_deals if d.position_id == ticket]
+            if matching:
+                exit_deals = matching
+                break
             sample_pos_ids = [d.position_id for d in exit_deals[:5]] if exit_deals else []
             logger.warning(
-                f"No closing deal found for ticket {ticket}. "
+                f"No closing deal found for ticket {ticket} (attempt {attempt+1}/3). "
                 f"Sample position_ids from history: {sample_pos_ids}"
             )
-            # Fallback: try matching by any deal with this ticket or position_id
-            for d in deals:
-                if d.ticket == ticket or d.position_id == ticket:
-                    logger.info(f"Found deal by ticket/position fallback: deal={d.ticket} pos_id={d.position_id} entry={d.entry} profit={d.profit}")
-                    break
+            if attempt < 2:
+                time.sleep(1.5)
+        else:
             return None
         exit_deals = matching
         total_profit = sum(d.profit for d in exit_deals)

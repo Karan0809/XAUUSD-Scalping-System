@@ -26,7 +26,7 @@ from telegram.alerts import TelegramNotifier, fmt_et
 logger = logging.getLogger(__name__)
 trade_logger = get_logger("trade")
 
-SL_PIPS = 20
+SL_PIPS = 50
 SL_PRICE = SL_PIPS / 100.0
 RISK_PCT = 1.2
 MAX_TRADES_PER_DAY = 20
@@ -148,8 +148,7 @@ class AggressiveBot:
         pdiff = price - pos["entry"]
         if not is_buy:
             pdiff = -pdiff
-        comm = self.settings.backtest_commission * lots
-        profit = round(pdiff * lots * 100 - comm, 2)
+        profit = round(pdiff * lots * 100, 2)
 
         ticket = pos.get("ticket")
         if ticket:

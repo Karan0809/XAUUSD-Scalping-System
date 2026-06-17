@@ -140,8 +140,7 @@ class ScalperBot:
         pdiff = price - pos["entry"]
         if not is_buy:
             pdiff = -pdiff
-        comm = self.settings.backtest_commission * lots
-        profit = round(pdiff * lots * 100 - comm, 2)
+        profit = round(pdiff * lots * 100, 2)
 
         ticket = pos.get("ticket")
         if ticket:
