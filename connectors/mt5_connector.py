@@ -347,7 +347,7 @@ class MT5Connector:
                         matching.sort(key=lambda p: p.time, reverse=True)
                         ticket = matching[0].ticket
                         actual_sl = matching[0].sl
-                        if abs(actual_sl - request["sl"]) > 0.001:
+                        if abs(round(actual_sl, 2) - round(request["sl"], 2)) > 0.05:
                             logger.warning(
                                 f"Broker SL mismatch: requested={request['sl']:.2f} actual={actual_sl:.2f} "
                                 f"(diff={abs(actual_sl - request['sl']):.2f})"

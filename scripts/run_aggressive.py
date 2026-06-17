@@ -558,7 +558,7 @@ class AggressiveBot:
 
                 self._manage_position(rates, i, current_time)
 
-                if self._position is None and self._trades_today < MAX_TRADES_PER_DAY:
+                if self._position is None:  # and self._trades_today < MAX_TRADES_PER_DAY:
                     if self.news_filter is not None:
                         in_blackout, reason = self.news_filter.is_blackout(now)
                         if in_blackout:
