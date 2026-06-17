@@ -629,7 +629,7 @@ class ScalperBot:
 
                 self._manage_position(rates, i, current_time)
 
-                if self._position is None and self._trades_today < self.settings.max_daily_trades:
+                if self._position is None:  # and self._trades_today < self.settings.max_daily_trades:
                     throttled = self._last_signal_time and (current_time - self._last_signal_time).total_seconds() < 180
                     if not throttled:
                         # News blackout

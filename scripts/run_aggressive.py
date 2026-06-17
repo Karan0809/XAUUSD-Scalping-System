@@ -129,9 +129,10 @@ class AggressiveBot:
         risk_amount = self._get_risk_amount(balance)
         return max(0.01, min(round(risk_amount / (sl_price * 100), 2), 10.0))
 
-    def _is_within_zone(self, price: float):
+    def _get_zone_signal(self, price: float):
         best_dist = float("inf")
         direction = None
+        zone_sl = None
         for z in self.zone_detector.zones:
             if z.breached:
                 continue
@@ -140,12 +141,16 @@ class AggressiveBot:
                 if d < best_dist:
                     best_dist = d
                     direction = "buy"
+                    zone_sl = z.zone_low - 0.03
             elif z.zone_type == "supply" and z.zone_low > price:
                 d = abs(price - (z.zone_high + z.zone_low) / 2.0)
                 if d < best_dist:
                     best_dist = d
                     direction = "sell"
-        return direction
+                    zone_sl = z.zone_high + 0.03
+        if direction and zone_sl is not None and abs(zone_sl - price) > 0.80:
+            zone_sl = None
+        return direction, zone_sl
 
     def _check_momentum(self, bar: Dict[str, float], prev_close: float, direction: str) -> bool:
         if direction == "buy":
@@ -583,18 +588,22 @@ class AggressiveBot:
                         time.sleep(10)
                         continue
 
-                    direction = self._is_within_zone(bar["close"])
+                    direction, zone_sl = self._get_zone_signal(bar["close"])
                     if direction and i >= 2:
                         prev_close = rates.iloc[i - 1]["close"]
                         if self._check_momentum(bar, prev_close, direction):
                             balance = acct["balance"]
-                            sl_dist = self._calc_sl_distance(rates)
-                            lot_size = self._calc_lot_size(balance, sl_dist)
+                            price = tick["ask"] if direction == "buy" else tick["bid"]
+                            if zone_sl is not None:
+                                sl = zone_sl
+                                actual_sl_dist = abs(sl - price)
+                            else:
+                                sl = (tick["bid"] - SL_PRICE) if direction == "buy" else (tick["ask"] + SL_PRICE)
+                                actual_sl_dist = SL_PRICE
+                            lot_size = self._calc_lot_size(balance, actual_sl_dist)
                             if lot_size >= 0.01:
                                 mt5_type = mt5.ORDER_TYPE_BUY if direction == "buy" else mt5.ORDER_TYPE_SELL
-                                price = tick["ask"] if direction == "buy" else tick["bid"]
-                                sl = (tick["bid"] - sl_dist) if direction == "buy" else (tick["ask"] + sl_dist)
-                                tp = (price + sl_dist * 25) if direction == "buy" else (price - sl_dist * 25)
+                                tp = (price + actual_sl_dist * 25) if direction == "buy" else (price - actual_sl_dist * 25)
 
                                 try:
                                     order = self.connector.place_order(
