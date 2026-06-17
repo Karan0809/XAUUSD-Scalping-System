@@ -303,7 +303,7 @@ class MT5Connector:
                 error = mt5.last_error()
                 logger.error(f"Order send failed: {error}")
                 raise MT5ConnectorError(f"Order send failed: {error}")
-            if result.retcode == 0:
+            if result.retcode in (0, 1, 10008, 10009):
                 break
             if attempt == 0 and result.retcode == 10016:
                 logger.warning(f"Order rejected (10016), retrying with fresh tick...")
@@ -335,11 +335,21 @@ class MT5Connector:
                 f"comment={result.comment}"
             )
 
+        # Find actual position ticket from MT5 for downstream operations
         ticket = result.order if result.order != 0 else result.deal
+        try:
+            positions = mt5.positions_get(symbol=symbol)
+            if positions:
+                matching = [p for p in positions if p.magic == magic and abs(p.price_open - result.price) < 1.0]
+                if matching:
+                    matching.sort(key=lambda p: p.time, reverse=True)
+                    ticket = matching[0].ticket
+        except Exception:
+            pass
         logger.info(
             f"Order placed: {order_type_str} {volume} {symbol} "
             f"@{result.price}, SL={request['sl']:.2f}, TP={request['tp']:.2f}, "
-            f"deal={result.deal} order={result.order} ticket={ticket}"
+            f"deal={result.deal} order={result.order} pos_ticket={ticket}"
         )
         return {
             "ticket": ticket,
@@ -388,8 +398,8 @@ class MT5Connector:
         }
 
         result = mt5.order_send(request)
-        if result is not None and result.retcode in (0, 1, 10008, 10009):
-            logger.info(f"Position closed: {ticket} @ {price} retcode={result.retcode} deal={result.deal}")
+        if result is not None and result.retcode in (0, 10009):
+            logger.info(f"Position closed: {ticket} @ {price} deal={result.deal} retcode={result.retcode}")
             return {
                 "order": result.order,
                 "deal": result.deal,
@@ -401,7 +411,7 @@ class MT5Connector:
             logger.warning(f"IOC close rejected ({result.retcode}), retrying without type_filling")
             request.pop("type_filling")
             result = mt5.order_send(request)
-            if result is not None and result.retcode in (0, 1, 10008, 10009):
+            if result is not None and result.retcode in (0, 10009):
                 logger.info(f"Position closed (no filling mode): {ticket} @ {price} deal={result.deal}")
                 return {
                     "order": result.order,
@@ -419,7 +429,7 @@ class MT5Connector:
                         logger.warning(f"Retrying close with actual ticket {actual_ticket} (stored was {ticket})")
                         request["position"] = actual_ticket
                         result = mt5.order_send(request)
-                        if result is not None and result.retcode in (0, 1, 10008, 10009):
+                        if result is not None and result.retcode in (0, 10009):
                             logger.info(f"Position closed via actual ticket: {actual_ticket} @ {price} deal={result.deal}")
                             return {
                                 "order": result.order,
