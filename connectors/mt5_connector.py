@@ -471,13 +471,26 @@ class MT5Connector:
         to_dt = datetime.now(timezone.utc)
         deals = mt5.history_deals_get(from_dt, to_dt)
         if deals is None or len(deals) == 0:
+            logger.warning(f"No deals found in history for ticket {ticket}")
             return None
         exit_deals = []
         for d in deals:
-            if d.position_id == ticket and d.entry == 1:
+            if d.entry == 1:
                 exit_deals.append(d)
-        if not exit_deals:
+        matching = [d for d in exit_deals if d.position_id == ticket]
+        if not matching:
+            sample_pos_ids = [d.position_id for d in exit_deals[:5]] if exit_deals else []
+            logger.warning(
+                f"No closing deal found for ticket {ticket}. "
+                f"Sample position_ids from history: {sample_pos_ids}"
+            )
+            # Fallback: try matching by any deal with this ticket or position_id
+            for d in deals:
+                if d.ticket == ticket or d.position_id == ticket:
+                    logger.info(f"Found deal by ticket/position fallback: deal={d.ticket} pos_id={d.position_id} entry={d.entry} profit={d.profit}")
+                    break
             return None
+        exit_deals = matching
         total_profit = sum(d.profit for d in exit_deals)
         last = exit_deals[-1]
         return {
@@ -507,8 +520,8 @@ class MT5Connector:
         }
 
         result = mt5.order_send(request)
-        if result is not None and result.retcode == 0:
-            logger.info(f"Position {ticket} modified: SL={sl}, TP={tp}")
+        if result is not None and result.retcode in (0, 10009):
+            logger.info(f"Position {ticket} modified: SL={sl}, TP={tp} retcode={result.retcode}")
             return True
         logger.error(
             f"Modify position failed: retcode={result.retcode if result is not None else 'None'}"

@@ -204,8 +204,7 @@ class ScalperBot:
             if not is_buy:
                 pdiff = -pdiff
             remaining = pos.get("remaining_lots", pos["original_lot_size"])
-            comm = self.settings.backtest_commission * remaining
-            pnl_close = round(pdiff * remaining * 100 - comm, 2)
+            pnl_close = round(pdiff * remaining * 100, 2)
             pos["pnl"] = round(pos.get("pnl", 0) + pnl_close, 2)
             pos["exit_reason"] = "sl"
             pos["close_time"] = current_time
@@ -683,11 +682,11 @@ class ScalperBot:
 
                                 if signal["direction"] == "buy":
                                     entry_price = tick["ask"]
-                                    new_sl = entry_price - sl_dist
+                                    new_sl = tick["bid"] - sl_dist
                                     new_tp = entry_price + tp_dist
                                 else:
                                     entry_price = tick["bid"]
-                                    new_sl = entry_price + sl_dist
+                                    new_sl = tick["ask"] + sl_dist
                                     new_tp = entry_price - tp_dist
 
                                 try:

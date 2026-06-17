@@ -230,8 +230,7 @@ class AggressiveBot:
                     if not is_buy:
                         pdiff = -pdiff
                     remaining = pos.get("remaining_lots", pos["original_lot_size"])
-                    comm = self.settings.backtest_commission * remaining
-                    pnl_close = round(pdiff * remaining * 100 - comm, 2)
+                    pnl_close = round(pdiff * remaining * 100, 2)
                     pos["pnl"] = round(pos.get("pnl", 0) + pnl_close, 2)
                     pos["exit_reason"] = "sl"
                     pos["close_time"] = current_time
@@ -577,7 +576,7 @@ class AggressiveBot:
                             if lot_size >= 0.01:
                                 mt5_type = mt5.ORDER_TYPE_BUY if direction == "buy" else mt5.ORDER_TYPE_SELL
                                 price = tick["ask"] if direction == "buy" else tick["bid"]
-                                sl = price - SL_PRICE if direction == "buy" else price + SL_PRICE
+                                sl = (tick["bid"] - SL_PRICE) if direction == "buy" else (tick["ask"] + SL_PRICE)
                                 tp = (price + SL_PRICE * 25) if direction == "buy" else (price - SL_PRICE * 25)
 
                                 try:

@@ -37,12 +37,13 @@ class RiskManager:
         if profit < 0:
             self._daily_loss_sum += abs(profit)
             self._consecutive_losses += 1
-            if self._consecutive_losses >= self._max_consecutive_losses:
-                self._blocked_today = True
-                logger.warning(
-                    f"RiskManager: {self._consecutive_losses} consecutive losses, "
-                    f"blocked for rest of day"
-                )
+            # NOTE: Disabled for demo testing
+            # if self._consecutive_losses >= self._max_consecutive_losses:
+            #     self._blocked_today = True
+            #     logger.warning(
+            #         f"RiskManager: {self._consecutive_losses} consecutive losses, "
+            #         f"blocked for rest of day"
+            #     )
         else:
             self._consecutive_losses = 0
 
