@@ -67,7 +67,7 @@ def parse_args():
     parser.add_argument("--max-trades", type=int, default=20, help="Max trades per day")
     parser.add_argument("--no-trend-filter", action="store_true", help="Disable M15 trend filter")
     parser.add_argument("--session-filter", action="store_true", help="Only trade during London (9-12) and NY (13-16) sessions")
-    parser.add_argument("--sl-mode", type=str, default="fixed", choices=["fixed", "min_sl", "atr"],
+    parser.add_argument("--sl-mode", type=str, default="min_sl", choices=["fixed", "min_sl", "atr"],
                         help="SL mode: fixed (pips arg), min_sl (zone SL + 20pip min), atr (ATR*1.5)")
     parser.add_argument("--zone-buffer", type=float, default=0.15,
                         help="Buffer below/above zone edge for SL (default: 0.15 = 15 pips)")
@@ -192,18 +192,6 @@ def check_momentum(bars: pd.DataFrame, direction: str) -> bool:
         return last["close"] < last["open"] and last["close"] < prev["close"]
 
 
-def check_m1_alignment(m1_bars: pd.DataFrame, direction: str, strict: bool = False) -> bool:
-    if len(m1_bars) < 7:
-        return True
-    closes = m1_bars["close"].values[-6:]
-    net_change = closes[-1] - closes[0]
-    aligned = sum(1 for i in range(1, len(closes))
-                  if (direction == "buy" and closes[i] >= closes[i-1]) or
-                     (direction == "sell" and closes[i] <= closes[i-1]))
-    min_aligned = 3 if strict else 2
-    if direction == "sell":
-        return aligned >= min_aligned and net_change <= 0.50
-    return aligned >= min_aligned and net_change >= -0.50
 
 
 def check_trend(df_15min: pd.DataFrame, m15_idx: int) -> Optional[str]:
@@ -448,11 +436,10 @@ def main():
                 result.trend_filtered += 1
                 continue
 
-            # 3. M1 alignment + momentum: confirm M1 direction supports entry
+            # 3. Momentum: confirm M1 direction supports entry
             m1_window = df.iloc[max(0, i - 6):i + 1]
-            if not check_m1_alignment(m1_window, direction) or not check_momentum(m1_window, direction):
+            if not check_momentum(m1_window, direction):
                 result.mom_filtered += 1
-                continue
                 continue
             entry_price = price
             if direction == "buy":

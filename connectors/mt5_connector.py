@@ -478,41 +478,66 @@ class MT5Connector:
             })
         return result
 
-    def get_position_close_from_history(self, ticket: int) -> Optional[Dict[str, Any]]:
-        from_dt = datetime.now(timezone.utc) - timedelta(days=7)
+    def get_position_close_from_history(
+        self, ticket: int, symbol: Optional[str] = None, entry_price: Optional[float] = None
+    ) -> Optional[Dict[str, Any]]:
+        from_dt = datetime.now() - timedelta(days=7)
+        to_dt = datetime.now()
         for attempt in range(3):
-            to_dt = datetime.now(timezone.utc)
-            deals = mt5.history_deals_get(from_dt, to_dt)
+            try:
+                deals = mt5.history_deals_get(from_dt, to_dt)
+            except Exception as e:
+                logger.warning(f"history_deals_get failed for ticket {ticket}: {e} (attempt {attempt+1}/3)")
+                time.sleep(2)
+                continue
             if deals is None or len(deals) == 0:
                 logger.warning(f"No deals found in history for ticket {ticket} (attempt {attempt+1}/3)")
-                time.sleep(1)
+                time.sleep(2)
                 continue
-            exit_deals = []
-            for d in deals:
-                if d.entry == 1:
-                    exit_deals.append(d)
+            exit_deals = [d for d in deals if d.entry == 1]
             matching = [d for d in exit_deals if d.position_id == ticket]
             if matching:
-                exit_deals = matching
-                break
+                total_profit = sum(d.profit for d in matching)
+                last = matching[-1]
+                return {
+                    "price": last.price,
+                    "profit": total_profit,
+                    "volume": sum(d.volume for d in matching),
+                    "time": datetime.fromtimestamp(last.time, tz=timezone.utc),
+                }
             sample_pos_ids = [d.position_id for d in exit_deals[:5]] if exit_deals else []
             logger.warning(
                 f"No closing deal found for ticket {ticket} (attempt {attempt+1}/3). "
                 f"Sample position_ids from history: {sample_pos_ids}"
             )
             if attempt < 2:
-                time.sleep(1.5)
-        else:
-            return None
-        exit_deals = matching
-        total_profit = sum(d.profit for d in exit_deals)
-        last = exit_deals[-1]
-        return {
-            "price": last.price,
-            "profit": total_profit,
-            "volume": sum(d.volume for d in exit_deals),
-            "time": datetime.fromtimestamp(last.time, tz=timezone.utc),
-        }
+                time.sleep(2)
+        # Fallback: match by symbol + entry price when ticket-based lookup fails
+        if symbol and entry_price is not None:
+            logger.warning(f"Trying price-based fallback for ticket {ticket} (symbol={symbol}, entry={entry_price:.2f})")
+            deals = mt5.history_deals_get(datetime.now() - timedelta(days=2), datetime.now())
+            if deals:
+                exit_deals = [d for d in deals if d.entry == 1 and d.symbol == symbol]
+                close_by_price = None
+                best_diff = 999.0
+                for d in exit_deals:
+                    diff = abs(d.price - entry_price)
+                    if diff < best_diff and diff < 5.0:
+                        best_diff = diff
+                        close_by_price = d
+                if close_by_price:
+                    logger.info(f"Price-based fallback found deal {close_by_price.deal} for ticket {ticket}")
+                    close_deals = [d for d in exit_deals if d.position_id == close_by_price.position_id]
+                    if close_deals:
+                        total_profit = sum(d.profit for d in close_deals)
+                        last = close_deals[-1]
+                        return {
+                            "price": last.price,
+                            "profit": total_profit,
+                            "volume": sum(d.volume for d in close_deals),
+                            "time": datetime.fromtimestamp(last.time, tz=timezone.utc),
+                        }
+        return None
 
     def get_open_positions_count(self, symbol: str = "XAUUSD") -> int:
         return len(self.get_positions(symbol))

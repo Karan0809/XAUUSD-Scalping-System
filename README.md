@@ -117,22 +117,22 @@ Trades all sessions using ORB pipeline (breakout pullback, aggressive FVG, range
 | **Avg Bars Held** | 1.5 |
 | **Return** | 6,759% |
 
-### Aggressive M1 ($2,000 start)
+### Aggressive M1 ($5,000 start)
 
-Trades M1 bars using zone-based entries with EMA50 directional filter (price > EMA50 = buys only, < EMA50 = sells only), M1 micro-trend alignment (2 of 5 bars + net change ≤ 50 pips against), and session filter (Asia + London + NY). Zone SL with 15-pip buffer (30-pip min, 50-pip fallback, 80-pip cap). 50/50 + trailing exit model.
+Trades M1 bars using zone-based entries with EMA50 directional filter (price > EMA50 = buys only, < EMA50 = sells only), M1 momentum check (last bar must close in trade direction), and session filter (Asia + London + NY). Zone SL with 15-pip buffer (30-pip min hard clamp, 50-pip fallback, 80-pip cap). 50/50 + trailing exit model.
 
 | Metric | Result |
 |---|---|
-| **Total Trades** | 1,368 |
-| **Win Rate** | 67.18% |
-| **Total Profit** | **$60,257** |
-| **Profit Factor** | 6.13 |
-| **Max Drawdown** | $86.55 (1.21%) |
-| **Avg Win / Loss** | +$78.36 / -$26.18 |
-| **Largest Win / Loss** | +$719.45 / -$27.25 |
-| **Avg Bars Held** | 1.5 |
-| **Filters** | Zone=0 Mom=3,118 Trend=11,084 Spread=214 CB=0 News=0 |
-| **Return** | 3,013% |
+| **Total Trades** | 1,367 |
+| **Win Rate** | 79.59% |
+| **Total Profit** | **$70,345** |
+| **Profit Factor** | 22.01 |
+| **Max Drawdown** | $12.01 (0.23%) |
+| **Avg Win / Loss** | +$67.73 / -$12.00 |
+| **Largest Win / Loss** | +$713.28 / -$12.25 |
+| **Avg Bars Held** | 1.4 |
+| **Filters** | Zone=0 Mom=1,281 Trend=9,362 Spread=211 CB=0 News=0 |
+| **Return** | 1,407% |
 
 ### Key Fixes Applied
 
@@ -325,8 +325,8 @@ python -m pytest tests/ -k TestMongoWriteFailure -v
 # ORB Scalper
 python scripts/backtest.py --start 2025-09-01 --end 2026-06-03 --balance 1000
 
-# Aggressive M1
-python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-10 --balance 2000 --risk 1.2 --sl-mode min_sl --sl-pips 50 --zone-buffer 0.15 --session-filter
+# Aggressive M1 (min_sl is default now)
+python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-10 --balance 5000 --risk 1.2 --sl-mode min_sl --sl-pips 50 --zone-buffer 0.15 --session-filter
 ```
 
 Both backtests use tiered fixed risk, 0.5 max lots, slippage model, and read `max_spread` from settings. Results saved as JSON with `--output`.

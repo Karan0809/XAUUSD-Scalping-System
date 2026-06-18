@@ -158,18 +158,6 @@ class AggressiveBot:
         else:
             return bar["close"] < bar["open"] and bar["close"] < prev_close
 
-    def _check_m1_alignment(self, rates: pd.DataFrame, direction: str) -> bool:
-        if len(rates) < 7:
-            return True
-        closes = rates["close"].values[-6:]
-        net_change = closes[-1] - closes[0]
-        aligned = sum(1 for i in range(1, len(closes))
-                      if (direction == "buy" and closes[i] >= closes[i-1]) or
-                         (direction == "sell" and closes[i] <= closes[i-1]))
-        if direction == "sell":
-            return aligned >= 2 and net_change <= 0.50
-        return aligned >= 2 and net_change >= -0.50
-
     def _check_trend(self) -> Optional[str]:
         df = self._df_15min
         if df is None or len(df) < 100:
@@ -209,7 +197,7 @@ class AggressiveBot:
                     still_open = True
                 if still_open:
                     return
-                actual = self.connector.get_position_close_from_history(ticket)
+                actual = self.connector.get_position_close_from_history(ticket, self.settings.symbol, pos.get("entry"))
                 if actual:
                     logger.info(f"Actual close P&L from history: ${actual['profit']:.2f}")
                     pos["pnl"] = round(actual["profit"], 2)
@@ -261,7 +249,7 @@ class AggressiveBot:
                 still_open = True
             if not still_open:
                 logger.warning(f"Position {ticket} no longer on MT5, resolving...")
-                close_info = self.connector.get_position_close_from_history(ticket)
+                close_info = self.connector.get_position_close_from_history(ticket, self.settings.symbol, pos.get("entry"))
                 if close_info is not None:
                     pos["pnl"] = round(close_info["profit"], 2)
                     pos["exit"] = close_info["price"]
@@ -471,7 +459,7 @@ class AggressiveBot:
                 "ticket": p["ticket"],
             }
             try:
-                close_info = self.connector.get_position_close_from_history(p["ticket"])
+                close_info = self.connector.get_position_close_from_history(p["ticket"], p.get("symbol"), p.get("price_open"))
             except Exception:
                 close_info = None
             if close_info:
@@ -647,7 +635,7 @@ class AggressiveBot:
                             time.sleep(60)
                             continue
                         prev_close = rates.iloc[i - 1]["close"]
-                        if self._check_m1_alignment(rates, direction) and self._check_momentum(bar, prev_close, direction):
+                        if self._check_momentum(bar, prev_close, direction):
                             balance = acct["balance"]
                             price = tick["ask"] if direction == "buy" else tick["bid"]
                             MIN_SL_DIST = 0.30
@@ -664,6 +652,17 @@ class AggressiveBot:
                             else:
                                 sl = (tick["bid"] - SL_PRICE) if direction == "buy" else (tick["ask"] + SL_PRICE)
                                 actual_sl_dist = SL_PRICE
+                            # Hard clamp: ensure SL is at least MIN_SL_DIST away from price
+                            actual_sl_dist = max(actual_sl_dist, MIN_SL_DIST)
+                            if direction == "buy":
+                                sl = min(sl, price - actual_sl_dist)
+                            else:
+                                sl = max(sl, price + actual_sl_dist)
+                            logger.info(
+                                f"SL calc: zone_sl={zone_sl}, price={price:.2f}, "
+                                f"raw_dist={abs(zone_sl - price) if zone_sl else None:.2f}, "
+                                f"actual_sl_dist={actual_sl_dist:.2f}, sl={sl:.2f}"
+                            )
                             lot_size = self._calc_lot_size(balance, actual_sl_dist)
                             if lot_size >= 0.01:
                                 mt5_type = mt5.ORDER_TYPE_BUY if direction == "buy" else mt5.ORDER_TYPE_SELL

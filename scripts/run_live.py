@@ -199,7 +199,7 @@ class ScalperBot:
         close_info = None
         if ticket:
             try:
-                close_info = self.connector.get_position_close_from_history(ticket)
+                close_info = self.connector.get_position_close_from_history(ticket, self.settings.symbol, pos.get("entry"))
             except Exception:
                 pass
         if close_info is not None:
@@ -495,7 +495,7 @@ class ScalperBot:
                 self._position["tp1_lots"] = p["volume"]
             # Check if position was partially closed before restart
             try:
-                close_info = self.connector.get_position_close_from_history(p["ticket"])
+                close_info = self.connector.get_position_close_from_history(p["ticket"], p.get("symbol"), p.get("price_open"))
             except Exception:
                 close_info = None
             if close_info:
