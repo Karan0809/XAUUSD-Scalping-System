@@ -1,6 +1,6 @@
-# XAUUSD Scalper (ORB + Free Trade)
+# XAUUSD Scalper
 
-Multi-session scalper for XAUUSD on MetaTrader 5 combining ORB breakouts with an all-day free-trade fallback that uses zone/HTF/momentum confluences. One unified bot replaces the need for separate session and aggressive scalpers.
+Multi-session scalper for XAUUSD on MetaTrader 5 with two bots: an ORB session-based breakout bot and an aggressive M1 zone+momentum scalper.
 
 ## Strategy
 
@@ -16,20 +16,6 @@ Each trading day is split into three sessions, each with its own fresh opening r
 
 The bot runs Mon–Thu 00:00–17:00 UTC, Fri until 17:00 UTC (then disconnects and sleeps until Monday 00:00 UTC).
 
-### Free Trade Fallback
-
-When no ORB range is available (outside session hours, or before the opening candle closes), the bot falls back to a **free trade** mode that uses the same quality filters without the range requirement:
-
-| Filter | Source |
-|---|---|
-| **Direction** | HTF alignment (EMA50/200, BOS, HH/HL on M15) |
-| **Confirmation** | Swing break on M5 |
-| **Entry zone** | Institutional zone as POI for pullback |
-| **Entry method** | Pullback into zone or FVG anywhere |
-| **Validation** | Slow momentum, fib 0.5–0.618 discount, M5 reaction |
-
-Both ORB and free trade share the same tiered fixed risk per trade, same partial-profit exit model (30/40/30 + trailing), and same daily trade limit. Position sizes use tiered fixed risk (not compounding) with a hard cap of 0.5 lots and 1-2 pip slippage applied on entry for realistic fills.
-
 ### Entry Filters
 
 All entries share a common set of confluences before a signal is generated:
@@ -42,33 +28,14 @@ All entries share a common set of confluences before a signal is generated:
 | **FVG** | A Fair Value Gap must exist in the pullback for additional confluence |
 | **Slow momentum** | Pullback shows loss of momentum (small-bodied candles, long upper/lower wicks) |
 | **Reaction** | Price reacted at the POI with wicks or rejection, confirming the level holds |
-| **Fib discount** | Entry must be in the 0.5–0.618 golden retraction zone of the swing |
-
-#### Fibonacci Convention
-
-Fibonacci is measured from the **origin of the move** (where the retracement pulls back toward):
-
-| Direction | Fib drawn | 0.0 = | 1.0 = | 0.5–0.618 zone = |
-|---|---|---|---|---|
-| **Buy** (uptrend) | Low → High | Swing high | Swing low | Price retraced 50–61.8% back toward the swing low |
-| **Sell** (downtrend) | High → Low | Swing low | Swing high | Price retraced 50–61.8% back toward the swing high |
-
-Standard levels: **1.0, 0.786, 0.618, 0.5, 0.382, 0.236, 0.0**. Only the 0.5–0.618 golden zone is used for entry.
 
 ### Entry Types
 
 | Type | Trigger | Condition |
-|---|---|---|---|
-| **Breakout Pullback** | Price breaks the opening range, then pulls back into a POI | 5-min candle shows bullish/bearish reversal within POI + fib 0.5–0.618 retrace |
-| **Aggressive FVG** | Price re-enters a FVG left after the breakout | No waiting for a pullback — enters immediately on FVG touch with fib discount |
-| **Range Reversal** | Price sweeps the opening range boundary on the 5-min chart | Reversal candle with wick at the sweep point, no fib required |
-
-### Free Trade Entry Types
-
-| Type | Trigger | Condition |
-|---|---|---|
-| **Free Pullback** | Price pulls back into an institutional zone | 5-min candle reversal within zone + fib 0.5–0.618 + slow momentum + reaction |
-| **Free FVG** | FVG forms in the direction of the HTF trend | Entry at FVG midpoint, 50-pip fixed SL, no zone proximity required |
+|---|---|---|---|---|
+| **Breakout Pullback** | Price breaks the opening range, then pulls back into a POI | 5-min candle shows bullish/bearish reversal within POI |
+| **Aggressive FVG** | Price re-enters a FVG left after the breakout | No waiting for a pullback — enters immediately on FVG touch |
+| **Range Reversal** | Price sweeps the opening range boundary on the 5-min chart | Reversal candle with wick at the sweep point |
 
 ## Position Management Lifecycle
 
@@ -136,7 +103,7 @@ Backtested on live M5/M1 XAUUSD data across all sessions (Asia + London + NY). C
 
 ### ORB Scalper ($1,000 start)
 
-Trades all sessions using ORB pipeline (breakout pullback, aggressive FVG, range reversal) with free trade fallback. Each session allows at most 1 entry. Lot size determined by tiered fixed risk / SL distance, capped at 0.5 lots.
+Trades all sessions using ORB pipeline (breakout pullback, aggressive FVG, range reversal). Each session allows at most 1 entry. Lot size determined by tiered fixed risk / SL distance, capped at 0.5 lots.
 
 | Metric | Result |
 |---|---|
@@ -152,22 +119,22 @@ Trades all sessions using ORB pipeline (breakout pullback, aggressive FVG, range
 | **Filters** | Spread=89 CB=0 News=0 |
 | **Return** | 8,434% |
 
-### Aggressive M1 ($1,000 start)
+### Aggressive M1 ($2,000 start)
 
-Trades 24/5 on zone+momentum confluence with fixed 20-pip SL. No session awareness — enters any time zone and momentum align. 50/50 + trailing exit model.
+Trades M1 bars using zone-based entries with HH/HL + EMA50 trend filter, M1 micro-trend alignment, and session filter (Asia + London + NY). Zone SL with 15-pip buffer (30-pip min, 50-pip fallback, 80-pip cap). 50/50 + trailing exit model.
 
 | Metric | Result |
 |---|---|
-| **Total Trades** | 1,471 |
-| **Win Rate** | 77.50% |
-| **Total Profit** | **$67,528** |
-| **Profit Factor** | 18.16 |
-| **Max Drawdown** | $35.42 (0.78%) |
-| **Avg Win / Loss** | +$62.69 / -$11.89 |
-| **Largest Win / Loss** | +$713.43 / -$12.25 |
+| **Total Trades** | 918 |
+| **Win Rate** | 69.06% |
+| **Total Profit** | **$44,700** |
+| **Profit Factor** | 7.04 |
+| **Max Drawdown** | $86.31 (1.69%) |
+| **Avg Win / Loss** | +$82.19 / -$26.08 |
+| **Largest Win / Loss** | +$1,685.37 / -$27.25 |
 | **Avg Bars Held** | 1.4 |
-| **Filters** | Zone=0 Mom=1,616 Spread=217 CB=3,835 News=0 |
-| **Return** | 6,753% |
+| **Filters** | Zone=0 Mom=30,613 Trend=14,151 Spread=260 CB=0 News=0 |
+| **Return** | 2,235% |
 
 ### Key Fixes Applied
 
@@ -178,9 +145,9 @@ Trades 24/5 on zone+momentum confluence with fixed 20-pip SL. No session awarene
 | **Slippage model** (1-2 pip entry, 0-1 pip exit) | More realistic fills, prevents edge-case overperformance. |
 | **`elif` in session/date reset** | Stopped double-reset bug that cleared `_entry_triggered`, causing duplicate entries. |
 | **3-bar minimum gap** | Safety net preventing re-entry within same session after a close. |
-| **Recovery entries** (ORB only) | After a loss, next entry tightens SL using M5 swing level — same risk, larger size. +$781 gain. |
-| **Spread filter 20 points** (was 60) | Blocks wider spreads — safer for tight 1-pip SL scalping. |
-| **Multi-env with `--env` CLI flag** | Run both bots simultaneously on separate MT5 accounts via `.env.orb` / `.env.aggressive`. |
+| **Recovery entries** | After a loss, next entry tightens SL using M5 swing level — same risk, larger size. |
+| **Spread filter 20 points** (was 60) | Blocks wider spreads — safer for tight SL scalping. |
+| **Multi-env with `--env` CLI flag** | Run multiple bots simultaneously on separate MT5 accounts via `.env.orb` / `.env.aggressive`. |
 | **Lazy env loading in settings.py** | `field(default_factory=...)` evaluates env vars after `load_dotenv()`, preventing stale values. |
 | **Settings cache order** | `setup_logging()` moved after bot init so the correct env file sets the global cache first. |
 | **`mt5.login()` after `initialize()`** | Explicitly logs into the account from the env file instead of reusing the terminal's cached session. |
@@ -194,24 +161,24 @@ Trades 24/5 on zone+momentum confluence with fixed 20-pip SL. No session awarene
 | **Zone rebuild without race window** | `build_historical()` saves old zones, rebuilds in-place, restores on error — no gap where zones are cleared. |
 | **`trade_stops_level` from symbol info** | Uses broker's actual minimum stop distance instead of hardcoded values — eliminates `Invalid stops (10016)` errors. |
 | **SL/TP actual values returned from `place_order`** | Returns the SL/TP values after broker `trade_stops_level` adjustment (including 10016 retry adjustments). Both bots store these actual values in position dicts, so TP1 levels, trail distances, and P&L estimates all match MT5. |
-| **Aggressive bot TP set to 500 pips** | Was 20 pips (= TP1 level), causing MT5 to auto-close the full position at 1:1 before the bot could manage 50% partial close + trailing. Now set far away as a safety net — bot manages all exits. |
+| **Aggressive bot TP set to 500 pips** | Was 20 pips (= TP1 level), causing MT5 to auto-close the full position at 1:1 before the bot could manage partial close + trailing. Now set far away as a safety net. |
 | **P&L double-count fix** | Aggressive bot's `_close_partial` exception handler overwrites P&L with total from deal history instead of adding to existing partial P&L. |
 | **Log/MongoDB use actual SL/TP** | All log messages and database records use the post-adjustment SL/TP from `place_order` instead of pre-adjustment input values. |
-| **`exit` field consistency** | Both bots default `exit` to `None` when no partial close occurred (instead of defaulting to entry price, which was misleading). |
+| **`exit` field consistency** | Both bots default `exit` to `None` when no partial close occurred (instead of defaulting to entry price). |
 | **`NameError` fix in `_manage_position`** | ORB bot used `rates.index.get_loc()` but the parameter is named `df` — would crash on first poll with an open position. |
-| **Crash guard after `_resolve_position_closed`** | When `_close_partial`'s exception handler called `_resolve_position_closed` → `self._position = None`, the loop body accessed `self._position["remaining_lots"]` on the next iteration → `AttributeError`. Fixed by adding `self._position and` guards and `if self._position is None: break` after each close call. |
-| **Trade double-count on stale-ticket cleanup** | Aggressive bot's `_close_partial` exception handler set `pos["remaining_lots"] = 0.0` without setting `pos["closed"]`, causing the post-loop close logic to re-fire and record P&L twice in risk_mgr with duplicate Telegram alerts. Fixed by setting `pos["closed"] = True` in the handler and adding `elif pos["remaining_lots"] <= 0: self._position = None` to clean up. |
-| **Consecutive losses not reset on new day** | `start_day()` didn't clear `_consecutive_losses`, so a loss streak persisted across days — blocked entry indefinitely. Fixed by resetting to 0 in the date-change block. |
-| **Peak balance only updated via `start_day()`** | Intraday balance increases were invisible to the drawdown check — bot could kill itself on a phantom drawdown. Fixed by updating `_peak_balance` at the top of `check_entry_allowed()`. |
-| **Telegram alert on circuit breaker block** | CB blocked silently — no notification. Fixed by adding `self.telegram.alert_error()` with a `_cb_alerted` sentinel flag (resets on `_check_new_day`), preventing spam every 60s loop iteration. |
-| **Backtest spread hardcoded to 20.0** | Live bot used `settings.max_spread` (default 60.0) but backtests used `20.0` — inconsistent filtering. Fixed both `backtest.py` and `backtest_aggressive.py` to use `settings.max_spread`. |
-| **Aggressive stale-ticket PnL = 0** | When position disappeared from MT5 without deal history, PnL was set to accumulated partials (0 if none partialed). Fixed by computing PnL from SL price using `pdiff * remaining * 100 - commission` — same formula as the ORB bot's `_resolve_position_closed`. |
-| **Missing `trade_logger` close on aggressive stale ticket** | `trade_logger.info("CLOSE ...")` was absent in the stale-ticket path — trades.log incomplete. Fixed by adding the call before `record_trade`. |
-| **Friday reconnect ignores mongo return** | `mongo.connect()` return value unchecked after weekend reconnection — trades silently lost. Fixed by logging a warning on failure in both bots. |
-| **SL updated before broker modify confirms** | TP1 set `pos["sl"] = entry` *before* calling `modify_position()`. If the broker rejected the modify, local SL was at entry while broker had original SL — premature close on next bar. Fixed by moving SL update into `if ok:` branch in both bots. |
-| **Telegram heartbeat fires immediately on startup** | `_last_heartbeat` initialized to `0`, so the first loop iteration sent heartbeat immediately — blocked startup for 20s (2 chat IDs × 10s timeout). Fixed by initializing to `time.time()`. |
-| **Telegram 10s timeout blocks bot** | When `api.telegram.org` was unreachable, each HTTP request blocked for 10s — 20s per heartbeat cycle. Fixed by reducing timeout to 5s and adding exponential backoff (2^failures up to 5min) with `WARNING`-level logging. |
-| **Ticket mismatch — deal vs position** | `place_order` returned `result.deal` (deal ticket) as the position ticket, but `get_positions()` returns `pos.ticket` (position ticket). These are different IDs in MT5 — the stale ticket check `p["ticket"] == ticket` never matched, so every trade was immediately treated as "no longer on MT5" within 30s, and `get_position_close_from_history` couldn't find closing deals. Fixed by using `result.order` (order ticket = position ticket for new market orders). Also narrowed `retcode` success to `== 0` only (was accepting `retcode=1`/rejected as success), and returns actual filled volume from `result.volume`. |
+| **Crash guard after `_resolve_position_closed`** | When `_close_partial`'s exception handler called `_resolve_position_closed` → `self._position = None`, the loop body crashed on next iteration. Fixed by adding guards and `break`. |
+| **Trade double-count on stale-ticket cleanup** | Aggressive bot's handler set `pos["remaining_lots"] = 0` without `pos["closed"] = True` — caused P&L recorded twice. Fixed. |
+| **Consecutive losses not reset on new day** | `start_day()` didn't clear `_consecutive_losses`, so a streak persisted across days. Fixed. |
+| **Peak balance only updated via `start_day()`** | Intraday balance increases were invisible — bot killed itself on phantom drawdown. Fixed. |
+| **Telegram alert on circuit breaker block** | CB blocked silently — no notification. Fixed with sentinel flag and `alert_error()`. |
+| **Backtest spread hardcoded to 20.0** | Live bot used `settings.max_spread` (60) but backtests used 20 — inconsistent. Fixed. |
+| **Aggressive stale-ticket PnL = 0** | When position disappeared without deal history, PnL was 0. Fixed by computing from SL price. |
+| **Missing `trade_logger` close on aggressive stale ticket** | `trades.log` incomplete for stale-ticket path. Fixed. |
+| **Friday reconnect ignores mongo return** | `mongo.connect()` return unchecked after weekend. Fixed with warning. |
+| **SL updated before broker modify confirms** | TP1 set `pos["sl"] = entry` before modify — premature close on next bar. Fixed. |
+| **Telegram heartbeat fires immediately on startup** | First loop iteration sent heartbeat — blocked startup 20s. Fixed. |
+| **Telegram 10s timeout blocks bot** | Timeout reduced to 5s with exponential backoff. Fixed. |
+| **Ticket mismatch — deal vs position** | Used `result.deal` as position ticket but it's a deal ID — never matched `get_positions()`. Fixed by using `result.order`. |
 
 ## Project Structure
 
@@ -224,16 +191,17 @@ Trades 24/5 on zone+momentum confluence with fixed 20-pip SL. No session awarene
 ├── core/
 │   ├── opening_range_scalp.py   # ORB strategy logic & signal generation
 │   ├── institutional_zone.py    # Supply/demand zone detection
-│   ├── risk_manager.py          # Circuit breaker (daily loss, consecutive losses, drawdown)
-│   └── news_filter.py           # ForexFactory news blackout filter
+│   ├── risk_manager.py          # Risk controls (daily loss, consecutive losses, drawdown)
+│   ├── news_filter.py           # ForexFactory news blackout filter
+│   └── session_validator.py     # Session day validation
 ├── database/
 │   └── mongo_client.py          # MongoDB persistence (trades, signals, metrics)
 ├── log_utils/
 │   └── logger_setup.py          # Structured JSON logging (console + file)
 ├── scripts/
-│   ├── backtest.py              # Historical backtester (ORB + Free Trade)
+│   ├── backtest.py              # Historical backtester (ORB)
 │   ├── backtest_aggressive.py   # Historical backtester (Aggressive M1)
-│   ├── run_live.py              # Live trading bot (ORB + Free Trade)
+│   ├── run_live.py              # Live trading bot (ORB)
 │   └── run_aggressive.py        # Live trading bot (Aggressive M1)
 ├── telegram/
 │   └── alerts.py                # Telegram notifications (open/close/error/heartbeat)
@@ -319,25 +287,26 @@ The `--env` path resolves relative to the project root (not the working director
 ### Live Trading
 
 ```bash
-# ORB + Free Trade (default .env)
+# ORB scalper (default .env)
 python scripts/run_live.py
 
 # Aggressive M1 on different account
 python scripts/run_aggressive.py --env .env.aggressive
 ```
 
-The bot:
-1. Connects to MT5, MongoDB, Telegram on startup
-2. Loads 90 days of M15 data and builds institutional zones
-3. **Orphan recovery:** Scans for existing MT5 positions on startup — if one is found, adopts it into management (prevents duplicate trades after crash/restart)
-4. **Auto-adjust:** Scales risk % and max trades/day to account balance
-5. Polls for new M5 bars every **30 seconds** during trading hours
-6. **ORB mode:** Scans all sessions (Asia → London → NY) for breakout/pullback/reversal signals
-7.  **Free trade mode:** Falls through to HTF + zone + FVG signals when no ORB range is active
-8.  Places market orders with SL and wide TP via `place_order` (SL/TP are adjusted for broker `trade_stops_level`; the returned actual values are stored in the position dict for all downstream calculations)
-9.  Manages every open position via bar-by-bar iteration from `open_time` to current bar (TP1, TP2, trail, SL/BE)
-10. Sends Telegram alerts for open, close, error, and heartbeat
-11. Closes any open position at 17:00 UTC Friday, disconnects, and sleeps until Monday 00:00 UTC (auto-restart)
+Both bots:
+1. Connect to MT5, MongoDB, Telegram on startup
+2. Load 90 days of M15 data and build institutional zones
+3. **Orphan recovery:** Scans for existing MT5 positions on startup — adopts into management (prevents duplicate trades after crash/restart)
+4. Poll for new bars every **30 seconds** during trading hours
+5. Place market orders with SL and wide TP via `place_order`
+6. Manage open positions via bar-by-bar iteration from `open_time` (TP1, trail, SL/BE)
+7. Send Telegram alerts for open, close, error, and heartbeat
+8. Close open positions at **17:00 UTC Friday**, disconnect, sleep until Monday 00:00 UTC
+
+**ORB bot** (`run_live.py`): Scans sessions (Asia → London → NY) for breakout/pullback/reversal signals on M5.
+
+**Aggressive bot** (`run_aggressive.py`): Scans M1 bars for zone-based entries with HH/HL + EMA50 trend filter and M1 micro-trend alignment.
 
 ### Testing
 
@@ -355,30 +324,32 @@ python -m pytest tests/ -k TestMongoWriteFailure -v
 ### Backtesting
 
 ```bash
-# ORB Scalper (session-based, free trade fallback)
+# ORB Scalper
 python scripts/backtest.py --start 2025-09-01 --end 2026-06-03 --balance 1000
 
-# Aggressive M1 (zone+momentum, 24/7)
-python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-10 --balance 1000
+# Aggressive M1
+python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-10 --balance 2000 --risk 1.2 --sl-mode min_sl --sl-pips 50 --zone-buffer 0.15 --session-filter
 ```
 
-Both backtests use tiered fixed risk, 0.5 max lots, slippage model, and read `max_spread` from settings (default 60.0). Results are saved as JSON with `--output`.
+Both backtests use tiered fixed risk, 0.5 max lots, slippage model, and read `max_spread` from settings. Results saved as JSON with `--output`.
 
-- `--risk <pct>` — risk percent (backtests use tiered fixed risk regardless)
+- `--risk <pct>` — risk percent
+- `--sl-mode min_sl` — zone-based SL with minimum distance floor
+- `--zone-buffer <pips>` — buffer added to zone edge for SL
+- `--session-filter` — restrict to Asia/London/NY sessions
 - `--output <file>` — save results as JSON
 
 ## Risk Management
 
-- **Risk per trade:** Tiered fixed risk per trade — $10 (profit <$500), $15 ($500+), $20 ($2,000+), $30 ($10,000+), $50 ($50,000+). Live uses %-of-balance auto-adjust.
+- **Risk per trade:** %-of-balance (live) or tiered fixed risk (backtest). Aggressive bot uses 1.2% risk = SL distance × lot size.
 - **Max position:** Hard-capped at 0.5 lots in backtests; live capped at 10.0 lots
 - **Slippage model:** 1-2 pips on entry, 0-1 pip on exit (backtest only — live uses market fills)
-- **Max daily trades:** Auto-adjusts: 5 (< $200), 10 ($200–$500), 15 ($500+)
+- **Max daily trades:** Auto-adjusts (default 20/day, currently relaxed for demo testing)
 - **Min balance:** $50 (bot refuses to start below this)
-- **SL from bid/ask:** SL must be ≥ 5 pips from bid (buys) or ask (sells) — prevents wide-spread entries from placing SL directly at market
-- **Partial profit locking:** SL moves to breakeven after TP1 hit
-- **Trailing stop:** 0.2× SL distance (configurable via `trail_multiplier`), activates after TP1 (50-50) or TP2 (3-target); skips activation bar to avoid wick noise
-- **Spread filter:** Skips entry if spread > configured threshold (default 60.0 pips), sleeps 10s, logs debug
-- **Circuit breaker:** Blocks entry after 3% daily loss / 4 consecutive losses / 15% drawdown
+- **Partial profit locking:** SL moves to breakeven after TP1 hit (50% of position closed at 1:1)
+- **Trailing stop:** 0.3× SL distance, activates after TP1
+- **Spread filter:** Skips entry if spread > 20 points, sleeps 10s
+- **Circuit breaker:** Daily loss / consecutive loss / drawdown limits (configurable); currently relaxed for demo
 - **News filter:** (Optional) blocks entry during high-impact USD events (ForexFactory)
 - **Commission:** $3.50 per lot per side (built into all calculations)
 
@@ -386,32 +357,29 @@ Both backtests use tiered fixed risk, 0.5 max lots, slippage model, and read `ma
 
 | Alert | Trigger | Info |
 |---|---|---|
-| **Signal** | Entry condition met | Direction, entry/SL/TP, pip distance, R:R, setup name (ORB Breakout Pullback / ORB Aggressive FVG / ORB Range Reversal / Free Pullback / Free FVG) |
+| **Signal** | Entry condition met | Direction, entry/SL/TP, pip distance, R:R, setup name (ORB Breakout Pullback / ORB Aggressive FVG / ORB Range Reversal) |
 | **Open** | Order filled | Direction, lot size, exit model, entry/SL/TP, risk %, commission, setup name |
 | **Close** | Position fully closed | P&L with emoji (green/red), exit reason (TP/trail/BE/SL) with icon, R:R earned, targets hit, duration, balance |
 | **Partial** | TP1, TP2, or trail filled | Lots, price, P&L, cumulative P&L |
-| **Daily Summary** | End of day | Trades split by type (ORB vs Free), wins/losses, WR, P&L, PF, DD, balance |
+| **Daily Summary** | End of day | Wins/losses, WR, P&L, PF, DD, balance |
 | **Heartbeat** | Every 6 hours | Balance, equity, uptime, position status, daily trades count |
 | **Error** | On failure | Error message and timestamp |
 
-All trade alerts are tagged `[ORB]` or `[FREE]` so you can distinguish session-based entries from free-trade fallback entries at a glance.
-
-**Message volume:** ~5 messages per trade (OPEN → TP1 → TP2 → TRAIL → CLOSE) = ~75/day at 15 trades max, plus 4 heartbeats + 1 summary ≈ **80 messages/day total**.
+**Message volume:** ~4 messages per trade (OPEN → TP1 → TRAIL → CLOSE), plus heartbeats + daily summary.
 
 ## Architecture Notes
 
-- **All times in UTC.** MT5 timestamps are Unix epoch → converted with `utc=True`. Session hours are hardcoded as UTC. NewsFilter converts ForexFactory Eastern times → UTC via `zoneinfo`.
-- **Bar-by-bar position management.** On each 30s poll, the bot examines every M5 bar since the position's open time, applying TP1/TP2/trail/SL checks sequentially. Flags prevent re-triggering.
-- **Trail activation bar skip.** The trailing stop check skips the bar where it was just activated, preventing wick noise from stopping out the runner. Trail level is ratcheted on subsequent bars.
-- **Bar scan from open_time.** On each poll, the bot finds the position's `open_time` in the rates index and scans all bars from there to the current bar (instead of a fixed 30-bar window). This prevents missed triggers if the bot was stopped for >30 bars.
+- **All times in UTC.** MT5 timestamps are Unix epoch → converted with `utc=True`. Session hours are hardcoded as UTC.
+- **Bar-by-bar position management.** On each 30s poll, the bot examines every bar since the position's open time, applying TP1/trail/SL checks sequentially. Flags prevent re-triggering.
+- **Trail activation bar skip.** The trailing stop check skips the bar where it was just activated, preventing wick noise from stopping out the runner.
+- **Bar scan from open_time.** Scans all bars from the position's `open_time` to the current bar — prevents missed triggers if the bot was stopped for many bars.
 - **Spread computed live** as `(ask − bid) / point` since `tick.spread` is unavailable on some MT5 builds.
-- **Same-tick SL placement.** Spread check, entry price, and SL calculation all use the same `get_tick()` call. This prevents the bug where a separate earlier tick passes the spread filter but the actual entry tick has wider spread, causing SL to land 1 pip from bid.
-- **SL/TP from broker.** `place_order()` returns the actual SL/TP values after broker `trade_stops_level` adjustment, including 10016 retry adjustments. Both bots store these actual values in their position dicts, so all downstream calculations (TP1 level, trail distance, breakeven, P&L estimation) use values that match what MT5 has on the position.
-- **Aggressive bot TP is a far safety net** (500 pips). The TP sent to MT5 is deliberately placed far beyond all managed exit levels. This prevents MT5 from auto-closing the full position at 1:1 R:R (which was the TP1 level before the fix, defeating the 50/50 + trailing model). The bot manages TP1, breakeven, and trailing stop exclusively via `order_send` close requests.
-- **Partial close failure guard.** MT5 close is attempted before state is updated. If the close fails, the connector retries without `type_filling` (IOC may be unsupported for closes), then falls back to finding the actual position ticket from MT5 if the stored ticket is stale. If the position is already closed on MT5, P&L is recovered from deal history to prevent double-counting.
-- **Orphan position recovery.** On startup, the bot scans for existing MT5 positions. If found, they're adopted into local management — no orphaned trades run unmanaged and no duplicate opens on top of them. Partial-close detection checks MT5 deal history: if TP1 was partially closed before restart, the remaining position converts to trail-only.
-- **Multi-account isolation.** Each bot uses `mt5.login()` after `initialize()` to explicitly connect to its env-file account, ignoring the terminal's cached session. Separate MT5 copies with `MT5_PORTABLE=true` ensure independent data folders.
-- **AutoTrading auto-enable.** After login, the connector checks `terminal_info().trade_allowed` and sends Alt+T via the Win32 API if disabled — no more manual toggling on restarts.
-- **Settings cache ordering.** `setup_logging()` calls `get_settings()` which caches globally. Bot `__init__` must run first so the correct env file populates the cache; `setup_logging()` then reads the cached settings. Both `run_live.py` and `run_aggressive.py` follow this order.
-- **Logs are line-buffered** (`reconfigure(line_buffering=True)`) for real-time terminal output.
-- **No external dependencies beyond MT5, pandas, numpy, pymongo, python-dotenv, requests, pydantic, python-json-logger.**
+- **Same-tick SL placement.** Spread check, entry price, and SL calculation all use the same `get_tick()` call — prevents mismatch bugs.
+- **SL/TP from broker.** `place_order()` returns actual SL/TP values after broker `trade_stops_level` adjustment. All downstream calculations use these actual values.
+- **Aggressive bot TP is a far safety net** (500 pips). Prevents MT5 from auto-closing at TP1 level. The bot manages all exits via `order_send`.
+- **Partial close failure guard.** Retries without `type_filling` on failure, falls back to finding actual position ticket from MT5.
+- **Orphan position recovery.** On startup, scans for existing MT5 positions and adopts them — prevents duplicate opens after crash/restart.
+- **Multi-account isolation.** Each bot uses `mt5.login()` after `initialize()` for explicit account connection. Separate MT5 copies with `MT5_PORTABLE=true`.
+- **AutoTrading auto-enable.** Sends Alt+T via Win32 API if `trade_allowed` is False after connect.
+- **Settings cache ordering.** `setup_logging()` called after bot init so the correct env file populates the cache.
+- **Logs are line-buffered** for real-time terminal output.**

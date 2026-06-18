@@ -192,15 +192,52 @@ def check_momentum(bars: pd.DataFrame, direction: str) -> bool:
         return last["close"] < last["open"] and last["close"] < prev["close"]
 
 
-def check_trend(df_15min: pd.DataFrame, m15_idx: int, direction: str) -> bool:
-    if "ema20" not in df_15min.columns or m15_idx < 3:
+def check_m1_alignment(m1_bars: pd.DataFrame, direction: str, min_aligned: int = 2) -> bool:
+    if len(m1_bars) < 7:
         return True
-    ema = df_15min["ema20"]
-    if ema.iloc[m15_idx - 1] > ema.iloc[m15_idx - 3]:
-        return direction == "buy"
-    elif ema.iloc[m15_idx - 1] < ema.iloc[m15_idx - 3]:
-        return direction == "sell"
-    return True
+    closes = m1_bars["close"].values[-6:]
+    net_change = closes[-1] - closes[0]
+    aligned = sum(1 for i in range(1, len(closes))
+                  if (direction == "buy" and closes[i] >= closes[i-1]) or
+                     (direction == "sell" and closes[i] <= closes[i-1]))
+    if direction == "sell":
+        return aligned >= min_aligned and net_change <= 0.50
+    return aligned >= min_aligned and net_change >= -0.50
+
+
+def check_trend(df_15min: pd.DataFrame, m15_idx: int, direction: str) -> bool:
+    if "ema50" not in df_15min.columns or m15_idx < 50:
+        return False
+    start = max(0, m15_idx - 20)
+    recent = df_15min.iloc[start:m15_idx]
+    ema50 = df_15min["ema50"].iloc[:m15_idx]
+    current_close = recent["close"].iloc[-1]
+    current_ema50 = ema50.iloc[-1]
+    if pd.isna(current_ema50):
+        return False
+
+    above_ema = current_close > current_ema50
+    below_ema = current_close < current_ema50
+    highs = recent["high"].values
+    lows = recent["low"].values
+
+    swing_highs: List[float] = []
+    swing_lows: List[float] = []
+    for i in range(2, len(highs) - 2):
+        if highs[i] > highs[i-1] and highs[i] > highs[i-2] and highs[i] > highs[i+1] and highs[i] > highs[i+2]:
+            swing_highs.append(highs[i])
+        if lows[i] < lows[i-1] and lows[i] < lows[i-2] and lows[i] < lows[i+1] and lows[i] < lows[i+2]:
+            swing_lows.append(lows[i])
+
+    if above_ema and len(swing_highs) >= 2 and len(swing_lows) >= 2:
+        if swing_highs[-1] > swing_highs[-2] and swing_lows[-1] > swing_lows[-2]:
+            return direction == "buy"
+
+    if below_ema and len(swing_highs) >= 2 and len(swing_lows) >= 2:
+        if swing_highs[-1] < swing_highs[-2] and swing_lows[-1] < swing_lows[-2]:
+            return direction == "sell"
+
+    return False
 
 
 def print_results(result: AggBacktestResult, label: str = "AGGRESSIVE M1 SCALPER"):
@@ -246,6 +283,7 @@ def main():
     margin_rate = _fetch_margin_rate()
 
     df_15min["ema20"] = df_15min["close"].ewm(span=20, adjust=False).mean()
+    df_15min["ema50"] = df_15min["close"].ewm(span=50, adjust=False).mean()
 
     zone_detector = InstitutionalZoneDetector()
     zone_detector.build_historical(df_15min)
@@ -425,9 +463,9 @@ def main():
                 result.zone_filtered += 1
                 continue
 
-            # 2. Momentum: confirm direction on M1
+            # 2. M1 alignment + momentum: confirm M1 direction supports entry
             m1_window = df.iloc[max(0, i - 6):i + 1]
-            if not check_momentum(m1_window, direction):
+            if not check_m1_alignment(m1_window, direction) or not check_momentum(m1_window, direction):
                 result.mom_filtered += 1
                 continue
 
