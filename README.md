@@ -107,34 +107,32 @@ Trades all sessions using ORB pipeline (breakout pullback, aggressive FVG, range
 
 | Metric | Result |
 |---|---|
-| **Total Trades** | 531 |
-| **Win Rate** | 94.54% |
-| **Total Profit** | **$84,344** |
-| **Profit Factor** | 90.35 |
-| **Max Drawdown** | $15.91 (0.96%) |
-| **Avg Win / Loss** | +$169.83 / -$31.33 |
-| **Largest Win / Loss** | +$1,649.57 / -$51.82 |
-| **Recovery Trades** | 8 |
-| **Avg Bars Held** | 2.0 |
-| **Filters** | Spread=89 CB=0 News=0 |
-| **Return** | 8,434% |
+| **Total Trades** | 1,292 |
+| **Win Rate** | 84.06% |
+| **Total Profit** | **$67,594** |
+| **Profit Factor** | 28.71 |
+| **Max Drawdown** | $20.41 (1.00%) |
+| **Avg Win / Loss** | +$64.49 / -$11.84 |
+| **Largest Win / Loss** | +$644.07 / -$12.25 |
+| **Avg Bars Held** | 1.5 |
+| **Return** | 6,759% |
 
 ### Aggressive M1 ($2,000 start)
 
-Trades M1 bars using zone-based entries with HH/HL + EMA50 trend filter, M1 micro-trend alignment, and session filter (Asia + London + NY). Zone SL with 15-pip buffer (30-pip min, 50-pip fallback, 80-pip cap). 50/50 + trailing exit model.
+Trades M1 bars using zone-based entries with EMA50 directional filter (price > EMA50 = buys only, < EMA50 = sells only), M1 micro-trend alignment (2 of 5 bars + net change ≤ 50 pips against), and session filter (Asia + London + NY). Zone SL with 15-pip buffer (30-pip min, 50-pip fallback, 80-pip cap). 50/50 + trailing exit model.
 
 | Metric | Result |
 |---|---|
-| **Total Trades** | 918 |
-| **Win Rate** | 69.06% |
-| **Total Profit** | **$44,700** |
-| **Profit Factor** | 7.04 |
-| **Max Drawdown** | $86.31 (1.69%) |
-| **Avg Win / Loss** | +$82.19 / -$26.08 |
-| **Largest Win / Loss** | +$1,685.37 / -$27.25 |
-| **Avg Bars Held** | 1.4 |
-| **Filters** | Zone=0 Mom=30,613 Trend=14,151 Spread=260 CB=0 News=0 |
-| **Return** | 2,235% |
+| **Total Trades** | 1,368 |
+| **Win Rate** | 67.18% |
+| **Total Profit** | **$60,257** |
+| **Profit Factor** | 6.13 |
+| **Max Drawdown** | $86.55 (1.21%) |
+| **Avg Win / Loss** | +$78.36 / -$26.18 |
+| **Largest Win / Loss** | +$719.45 / -$27.25 |
+| **Avg Bars Held** | 1.5 |
+| **Filters** | Zone=0 Mom=3,118 Trend=11,084 Spread=214 CB=0 News=0 |
+| **Return** | 3,013% |
 
 ### Key Fixes Applied
 

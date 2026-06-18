@@ -179,30 +179,9 @@ class AggressiveBot:
         if len(ema50) < 50 or pd.isna(ema50.iloc[-1]):
             return None
         current_price = close.iloc[-1]
-        above_ema = current_price > ema50.iloc[-1]
-        below_ema = current_price < ema50.iloc[-1]
-
-        recent = df.tail(20)
-        highs = recent["high"].values
-        lows = recent["low"].values
-
-        swing_highs = []
-        swing_lows = []
-        for i in range(2, len(highs) - 2):
-            if highs[i] > highs[i-1] and highs[i] > highs[i-2] and highs[i] > highs[i+1] and highs[i] > highs[i+2]:
-                swing_highs.append(highs[i])
-            if lows[i] < lows[i-1] and lows[i] < lows[i-2] and lows[i] < lows[i+1] and lows[i] < lows[i+2]:
-                swing_lows.append(lows[i])
-
-        if above_ema and len(swing_highs) >= 2 and len(swing_lows) >= 2:
-            if swing_highs[-1] > swing_highs[-2] and swing_lows[-1] > swing_lows[-2]:
-                return "bullish"
-
-        if below_ema and len(swing_highs) >= 2 and len(swing_lows) >= 2:
-            if swing_highs[-1] < swing_highs[-2] and swing_lows[-1] < swing_lows[-2]:
-                return "bearish"
-
-        return "ranging"
+        if current_price > ema50.iloc[-1]:
+            return "bullish"
+        return "bearish"
 
     def _close_partial(self, lots: float, price: float, reason: str, current_time: datetime) -> None:
         pos = self._position
