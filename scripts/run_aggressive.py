@@ -158,6 +158,18 @@ class AggressiveBot:
         else:
             return bar["close"] < bar["open"] and bar["close"] < prev_close
 
+    def _check_m1_alignment(self, rates: pd.DataFrame, direction: str) -> bool:
+        if len(rates) < 7:
+            return True
+        closes = rates["close"].values[-6:]
+        net_change = closes[-1] - closes[0]
+        aligned = sum(1 for i in range(1, len(closes))
+                      if (direction == "buy" and closes[i] >= closes[i-1]) or
+                         (direction == "sell" and closes[i] <= closes[i-1]))
+        if direction == "sell":
+            return aligned >= 2 and net_change <= 0.50
+        return aligned >= 2 and net_change >= -0.50
+
     def _check_trend(self) -> Optional[str]:
         df = self._df_15min
         if df is None or len(df) < 100:
@@ -337,6 +349,12 @@ class AggressiveBot:
                         ticket=pos["ticket"],
                         sl=pos["entry"],
                     )
+                    if not ok:
+                        time.sleep(0.5)
+                        ok = self.connector.modify_position(
+                            ticket=pos["ticket"],
+                            sl=pos["entry"],
+                        )
                     if ok:
                         pos["sl"] = pos["entry"]
                     else:
@@ -609,6 +627,15 @@ class AggressiveBot:
                 self._manage_position(rates, i, current_time)
 
                 if self._position is None:  # and self._trades_today < MAX_TRADES_PER_DAY:
+                    # Future limits (uncomment when ready):
+                    # if self.risk_mgr._daily_loss_sum / max(acct["balance"], 1) * 100 >= self.settings.circuit_breaker_max_daily_loss_pct:
+                    #     logger.warning("Daily loss limit reached")
+                    #     time.sleep(60)
+                    #     continue
+                    # if self.risk_mgr._consecutive_losses >= self.settings.circuit_breaker_max_consecutive_losses:
+                    #     logger.warning("Consecutive losses limit reached")
+                    #     time.sleep(60)
+                    #     continue
                     if self.news_filter is not None:
                         in_blackout, reason = self.news_filter.is_blackout(now)
                         if in_blackout:
@@ -637,11 +664,11 @@ class AggressiveBot:
                     if direction and i >= 2:
                         trend = self._check_trend()
                         if trend is not None and ((direction == "buy" and trend != "bullish") or (direction == "sell" and trend != "bearish")):
-                            logger.debug(f"Trend filter blocked {direction} (M15 trend={trend})")
+                            logger.info(f"Trend filter blocked {direction} (M15 trend={trend})")
                             time.sleep(60)
                             continue
                         prev_close = rates.iloc[i - 1]["close"]
-                        if self._check_momentum(bar, prev_close, direction):
+                        if self._check_m1_alignment(rates, direction) and self._check_momentum(bar, prev_close, direction):
                             balance = acct["balance"]
                             price = tick["ask"] if direction == "buy" else tick["bid"]
                             MIN_SL_DIST = 0.30

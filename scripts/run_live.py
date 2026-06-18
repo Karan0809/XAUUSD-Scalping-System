@@ -672,6 +672,20 @@ class ScalperBot:
                             time.sleep(60)
                             continue
 
+                        # Future limits (uncomment when ready):
+                        # if self._trades_today >= self.settings.max_daily_trades:
+                        #     logger.warning("Max daily trades reached")
+                        #     time.sleep(60)
+                        #     continue
+                        # if self.risk_mgr._daily_loss_sum / max(acct["balance"], 1) * 100 >= self.settings.circuit_breaker_max_daily_loss_pct:
+                        #     logger.warning("Daily loss limit reached")
+                        #     time.sleep(60)
+                        #     continue
+                        # if self.risk_mgr._consecutive_losses >= self.settings.circuit_breaker_max_consecutive_losses:
+                        #     logger.warning("Consecutive losses limit reached")
+                        #     time.sleep(60)
+                        #     continue
+
                         window_df = rates.iloc[max(0, i - 200):i + 1]
                         df_15min_window = self._df_15min[self._df_15min.index <= current_time] if self._df_15min is not None else pd.DataFrame()
                         signal = self.orb.analyze(window_df, df_15min_window, current_time, session=current_session)
