@@ -162,6 +162,8 @@ class AggressiveBot:
         if len(ema50) < 50 or pd.isna(ema50.iloc[-1]):
             return None
         current_price = close.iloc[-1]
+        if pd.isna(current_price):
+            return None
         if current_price > ema50.iloc[-1]:
             return "bullish"
         return "bearish"
@@ -234,9 +236,11 @@ class AggressiveBot:
                 self._position = None
                 return True
 
-        pos["_last_price"] = price
         pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
-        pos["remaining_lots"] = round(pos["remaining_lots"] - lots, 2)
+        pos["remaining_lots"] = max(0, round(pos["remaining_lots"] - lots, 2))
+        pos["_last_price"] = price
+        if pos["remaining_lots"] <= 0:
+            pos["exit"] = price
 
         logger.info(f"PARTIAL {reason}: {lots:.2f} @ {price:.2f} P=${profit:.2f} (cum: ${pos['pnl']:.2f})")
         trade_logger.info(
@@ -252,7 +256,7 @@ class AggressiveBot:
 
         pos = self._position
         is_buy = pos["type"] == "buy"
-        sl_dist = abs(pos["entry"] - pos["original_sl"])
+        sl_dist = abs(pos["entry"] - pos["original_sl"]) if pos.get("original_sl") else SL_PRICE
         tp1_level = pos["entry"] + sl_dist if is_buy else pos["entry"] - sl_dist
 
         # Stale ticket check — verify position still exists on MT5
@@ -379,23 +383,26 @@ class AggressiveBot:
                         pos["trail_level"] = min(pos["entry"], new_trail)
 
             # Check trailing stop — skip activation bar
+            trail_fired = False
             if pos.get("trailing_activated") and pos["remaining_lots"] > 0 and \
                j != pos.get("trail_activation_bar") and \
                ((is_buy and bar["low"] <= pos["trail_level"]) or (not is_buy and bar["high"] >= pos["trail_level"])):
                 if self._close_partial(pos["remaining_lots"], pos["trail_level"], "trail", current_time) and self._position is None:
                     return
+                trail_fired = True
 
             # SL/BE check — skip the bar that triggered TP1
-            if pos["remaining_lots"] > 0 and \
+            if not trail_fired and pos["remaining_lots"] > 0 and \
                j != pos.get("tp_hit_bar") and \
-               ((is_buy and bar["low"] <= pos["sl"]) or (not is_buy and bar["high"] >= pos["sl"])):
+               ((is_buy and bar["low"] <= (pos.get("sl") or 0)) or (not is_buy and bar["high"] >= (pos.get("sl") or 99999))):
                 if self._close_partial(pos["remaining_lots"], pos["sl"],
                                        "be" if pos.get("tp1_hit") else "sl", current_time) and self._position is None:
                     return
 
-        if pos["remaining_lots"] <= 0 and not pos.get("closed"):
+        if pos["remaining_lots"] <= 0.005 and not pos.get("closed"):
+            pos["remaining_lots"] = 0.0
             pos["closed"] = True
-            pos["exit"] = pos.get("_last_price", None)
+            pos.setdefault("exit", pos.get("_last_price", None))
             pos["exit_reason"] = "trail" if pos.get("trailing_activated") else "sl/be"
             pos["close_time"] = current_time
 
@@ -588,7 +595,12 @@ class AggressiveBot:
                         self._position = None
                     self.mongo.disconnect()
                     self.connector.disconnect()
-                    time.sleep(secs_until_monday)
+                    while secs_until_monday > 0 and self._running:
+                        sleep_time = min(60, secs_until_monday)
+                        time.sleep(sleep_time)
+                        secs_until_monday -= 60
+                    if not self._running:
+                        return
                     self.connector.connect()
                     if not self.mongo.connect():
                         logger.warning("MongoDB reconnection failed after weekend")
@@ -644,7 +656,12 @@ class AggressiveBot:
                             time.sleep(60)
                             continue
 
-                    acct = self.connector.get_account_info()
+                    try:
+                        acct = self.connector.get_account_info()
+                    except Exception:
+                        logger.warning("Failed to get account info, retrying...")
+                        time.sleep(5)
+                        continue
                     allowed, cb_reason = self.risk_mgr.check_entry_allowed(acct["balance"])
                     if not allowed:
                         logger.warning(f"CB blocked: {cb_reason}")

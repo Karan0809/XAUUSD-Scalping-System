@@ -46,6 +46,7 @@ class MT5Connector:
             )
             if not logged_in:
                 error = mt5.last_error()
+                mt5.shutdown()
                 raise MT5ConnectorError(
                     f"MT5 login failed for {self.settings.mt5_login}: {error}"
                 )
@@ -133,7 +134,11 @@ class MT5Connector:
                 logger.warning("MT5 call failed, reconnecting...")
                 self.disconnect()
                 self.connect()
-        return fn(*args, **kwargs)
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            logger.warning(f"Final MT5 call attempt failed: {e}")
+            raise
 
     def get_rates(
         self,
@@ -213,7 +218,7 @@ class MT5Connector:
             tick = self.get_tick(symbol)
             acct = mt5.account_info()
             if acct:
-                margin_per_lot = (tick["ask"] * 100) / acct.leverage
+                margin_per_lot = (tick["ask"] * 100) / max(acct.leverage, 1)
             else:
                 margin_per_lot = tick["ask"] * 100
         return margin_per_lot
@@ -266,6 +271,8 @@ class MT5Connector:
 
         order_type_str = "buy" if order_type == mt5.ORDER_TYPE_BUY else "sell"
         info = mt5.symbol_info(symbol)
+        if info is None:
+            raise MT5ConnectorError(f"Cannot get symbol info for {symbol}")
         point = info.point
         stops_level = info.trade_stops_level * point if info.trade_stops_level > 0 else 0
         min_stop = stops_level if stops_level > 0 else max(point, 0.10)
@@ -342,7 +349,7 @@ class MT5Connector:
             try:
                 positions = mt5.positions_get(symbol=symbol)
                 if positions:
-                    matching = [p for p in positions if p.magic == magic and abs(p.price_open - result.price) < 1.0]
+                    matching = [p for p in positions if p.magic == magic and abs(p.price_open - result.price) < 0.5]
                     if matching:
                         matching.sort(key=lambda p: p.time, reverse=True)
                         ticket = matching[0].ticket
@@ -526,7 +533,7 @@ class MT5Connector:
                         best_diff = diff
                         close_by_price = d
                 if close_by_price:
-                    logger.info(f"Price-based fallback found deal {close_by_price.deal} for ticket {ticket}")
+                    logger.info(f"Price-based fallback found deal {close_by_price.ticket} for ticket {ticket}")
                     close_deals = [d for d in exit_deals if d.position_id == close_by_price.position_id]
                     if close_deals:
                         total_profit = sum(d.profit for d in close_deals)

@@ -194,17 +194,28 @@ def check_momentum(bars: pd.DataFrame, direction: str) -> bool:
 
 
 
-def check_trend(df_15min: pd.DataFrame, m15_idx: int) -> Optional[str]:
+def check_m1_alignment(m1_bars: pd.DataFrame, direction: str, min_aligned: int = 2) -> bool:
+    if len(m1_bars) < 7:
+        return True
+    closes = m1_bars["close"].values[-6:]
+    net_change = closes[-1] - closes[0]
+    aligned = sum(1 for i in range(1, len(closes))
+                  if (direction == "buy" and closes[i] >= closes[i-1]) or
+                     (direction == "sell" and closes[i] <= closes[i-1]))
+    if direction == "sell":
+        return aligned >= min_aligned and net_change <= 0.50
+    return aligned >= min_aligned and net_change >= -0.50
+
+
+def check_trend(df_15min: pd.DataFrame, m15_idx: int, direction: str) -> bool:
     if "ema50" not in df_15min.columns or m15_idx < 50:
-        return None
-    ema50 = df_15min["ema50"].iloc[:m15_idx]
-    current_close = df_15min["close"].iloc[m15_idx - 1]
-    current_ema50 = ema50.iloc[-1]
-    if pd.isna(current_ema50):
-        return None
-    if current_close > current_ema50:
-        return "bullish"
-    return "bearish"
+        return False
+    ema = df_15min["ema50"]
+    if ema.iloc[m15_idx - 1] > ema.iloc[m15_idx - 3]:
+        return direction == "buy"
+    elif ema.iloc[m15_idx - 1] < ema.iloc[m15_idx - 3]:
+        return direction == "sell"
+    return True
 
 
 def print_results(result: AggBacktestResult, label: str = "AGGRESSIVE M1 SCALPER"):
@@ -430,16 +441,18 @@ def main():
                 result.zone_filtered += 1
                 continue
 
-            # 2. Trend filter: EMA50 directional bias
-            trend = check_trend(df_15min, m15_idx) if not args.no_trend_filter else None
-            if trend is not None and ((direction == "buy" and trend != "bullish") or (direction == "sell" and trend != "bearish")):
+            # 2. Trend filter: EMA20 slope must align with direction
+            if not args.no_trend_filter and not check_trend(df_15min, m15_idx, direction):
                 result.trend_filtered += 1
                 continue
 
             # 3. Momentum: confirm M1 direction supports entry
             m1_window = df.iloc[max(0, i - 6):i + 1]
-            if not check_momentum(m1_window, direction):
+            if not check_m1_alignment(m1_window, direction) or not check_momentum(m1_window, direction):
                 result.mom_filtered += 1
+                continue
+
+            if (i - last_entry_bar) < 3:
                 continue
             entry_price = price
             if direction == "buy":
@@ -455,7 +468,7 @@ def main():
                 if raw_sl_dist > 0.80:
                     sl_dist = sl_price
                 elif args.sl_mode == "min_sl":
-                    sl_dist = max(raw_sl_dist, 0.30)
+                    sl_dist = max(raw_sl_dist, 0.20)
                 else:
                     sl_dist = raw_sl_dist
             else:

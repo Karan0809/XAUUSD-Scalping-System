@@ -89,7 +89,7 @@ class InstitutionalZoneDetector:
             )
             fvg = self._find_fvg(c0, c1, c2, "demand")
             if fvg is not None:
-                zone.fvg_low, zone.fvg_high = fvg
+                zone.fvg_high, zone.fvg_low = fvg
                 zone.strength += 1
             self.zones.append(zone)
             logger.debug(f"Demand zone: {base_low:.2f}-{base_high:.2f} at {bar.name}")
@@ -105,7 +105,7 @@ class InstitutionalZoneDetector:
             )
             fvg = self._find_fvg(c0, c1, c2, "supply")
             if fvg is not None:
-                zone.fvg_low, zone.fvg_high = fvg
+                zone.fvg_high, zone.fvg_low = fvg
                 zone.strength += 1
             self.zones.append(zone)
             logger.debug(f"Supply zone: {base_low:.2f}-{base_high:.2f} at {bar.name}")

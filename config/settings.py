@@ -94,13 +94,11 @@ class ScalperSettings:
         return True
 
 
-_settings: Optional[ScalperSettings] = None
-
-
-def get_settings(env_file: Optional[str] = None) -> ScalperSettings:
-    global _settings
-    if _settings is None:
-        load_dotenv(env_file or ".env", override=True)
-        _settings = ScalperSettings()
-        _settings.validate()
-    return _settings
+def get_settings(env_file: Optional[str] = None, _cache: dict = {}) -> ScalperSettings:
+    resolved = env_file or ".env"
+    if resolved not in _cache:
+        load_dotenv(resolved, override=True)
+        s = ScalperSettings()
+        s.validate()
+        _cache[resolved] = s
+    return _cache[resolved]

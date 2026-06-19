@@ -179,9 +179,11 @@ class ScalperBot:
                 self._resolve_position_closed(current_time)
                 return True
 
-        pos["_last_price"] = price
         pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
-        pos["remaining_lots"] = round(pos["remaining_lots"] - lots, 2)
+        pos["remaining_lots"] = max(0, round(pos["remaining_lots"] - lots, 2))
+        pos["_last_price"] = price
+        if pos["remaining_lots"] <= 0:
+            pos["exit"] = price
 
         logger.info(
             f"PARTIAL {reason.upper()}: {lots:.2f} lots @ {price:.2f} "
@@ -272,7 +274,7 @@ class ScalperBot:
                 return True
 
         entry = self._position["entry"]
-        sl_dist = abs(entry - self._position["original_sl"])
+        sl_dist = abs(entry - self._position["original_sl"]) if self._position.get("original_sl") else self.SL_PRICE
         is_buy = self._position["type"] == "buy"
 
         tp1_level = entry + sl_dist if is_buy else entry - sl_dist
@@ -360,25 +362,28 @@ class ScalperBot:
                         self._position["trail_level"] = min(self._position["entry"], new_trail)
 
             # Check trailing stop — skip activation bar
+            trail_fired = False
             if self._position and self._position.get("trailing_activated") and self._position["remaining_lots"] > 0 and \
                j != self._position.get("trail_activation_bar") and \
                ((is_buy and bar["low"] <= self._position["trail_level"]) or (not is_buy and bar["high"] >= self._position["trail_level"])):
                 self._close_partial(self._position["remaining_lots"], self._position["trail_level"], "trail", current_time)
                 if self._position is None:
                     break
+                trail_fired = True
 
             # SL/be check on remaining position — skip the bar that triggered TP1/TP2
-            if self._position and self._position["remaining_lots"] > 0 and \
+            if not trail_fired and self._position and self._position["remaining_lots"] > 0 and \
                j != self._position.get("tp_hit_bar") and \
-               ((is_buy and bar["low"] <= self._position["sl"]) or (not is_buy and bar["high"] >= self._position["sl"])):
+               ((is_buy and bar["low"] <= (self._position.get("sl") or 0)) or (not is_buy and bar["high"] >= (self._position.get("sl") or 99999))):
                 self._close_partial(self._position["remaining_lots"], self._position["sl"],
                                     "be" if self._position.get("tp1_hit") else "sl", current_time)
                 if self._position is None:
                     break
 
-        if self._position and self._position["remaining_lots"] <= 0:
+        if self._position and self._position["remaining_lots"] <= 0.005:
+            self._position["remaining_lots"] = 0.0
             trade = self._position
-            trade["exit"] = trade.get("_last_price", None)
+            trade.setdefault("exit", trade.get("_last_price", None))
             trade["exit_reason"] = "trail" if trade.get("trailing_activated") else \
                                    ("tp2" if trade.get("tp2_hit") else "sl/be")
             trade["close_time"] = current_time
@@ -608,7 +613,12 @@ class ScalperBot:
                         self._position = None
                     self.mongo.disconnect()
                     self.connector.disconnect()
-                    time.sleep(secs_until_monday)
+                    while secs_until_monday > 0 and self._running:
+                        sleep_time = min(60, secs_until_monday)
+                        time.sleep(sleep_time)
+                        secs_until_monday -= 60
+                    if not self._running:
+                        return
                     self.connector.connect()
                     if not self.mongo.connect():
                         logger.warning("MongoDB reconnection failed after weekend")
@@ -617,7 +627,7 @@ class ScalperBot:
                     self._m15_last_refresh = 0
                     continue
 
-                if not self.session_times.is_trading_hours(now):
+                if not self.session_times.is_trade_window(now):
                     time.sleep(60)
                     continue
 
@@ -669,7 +679,12 @@ class ScalperBot:
                             continue
 
                         # Circuit breaker
-                        acct = self.connector.get_account_info()
+                        try:
+                            acct = self.connector.get_account_info()
+                        except Exception:
+                            logger.warning("Failed to get account info, retrying...")
+                            time.sleep(5)
+                            continue
                         allowed, cb_reason = self.risk_mgr.check_entry_allowed(acct["balance"])
                         if not allowed:
                             logger.debug(f"Circuit breaker blocked: {cb_reason}")
