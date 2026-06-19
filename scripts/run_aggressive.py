@@ -660,7 +660,7 @@ class AggressiveBot:
                                 sl = max(sl, price + actual_sl_dist)
                             logger.info(
                                 f"SL calc: zone_sl={zone_sl}, price={price:.2f}, "
-                                f"raw_dist={abs(zone_sl - price) if zone_sl else None:.2f}, "
+                                f"raw_dist={'N/A' if zone_sl is None else f'{abs(zone_sl - price):.2f}'}, "
                                 f"actual_sl_dist={actual_sl_dist:.2f}, sl={sl:.2f}"
                             )
                             lot_size = self._calc_lot_size(balance, actual_sl_dist)
