@@ -334,9 +334,9 @@ def main():
                 position["tp_hit_bar"] = i
                 trail_dist = sl_dist * settings.trail_multiplier
                 if is_buy:
-                    position["trail_level"] = bar["high"] - trail_dist
+                    position["trail_level"] = max(position["entry"], bar["high"] - trail_dist)
                 else:
-                    position["trail_level"] = bar["low"] + trail_dist
+                    position["trail_level"] = min(position["entry"], bar["low"] + trail_dist)
                 position["trailing_activated"] = True
                 position["trail_activation_bar"] = i
 
@@ -346,11 +346,11 @@ def main():
                 if is_buy:
                     new_trail = bar["high"] - trail_dist
                     if new_trail > position["trail_level"]:
-                        position["trail_level"] = new_trail
+                        position["trail_level"] = max(position["entry"], new_trail)
                 else:
                     new_trail = bar["low"] + trail_dist
                     if new_trail < position["trail_level"]:
-                        position["trail_level"] = new_trail
+                        position["trail_level"] = min(position["entry"], new_trail)
 
             # Check trailing stop — skip activation bar
             if position.get("trailing_activated") and position["remaining_cents"] > 0 and \

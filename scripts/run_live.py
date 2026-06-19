@@ -150,7 +150,7 @@ class ScalperBot:
             return "bearish"
         return None
 
-    def _close_partial(self, lots: float, price: float, reason: str, current_time: datetime) -> None:
+    def _close_partial(self, lots: float, price: float, reason: str, current_time: datetime) -> bool:
         pos = self._position
         is_buy = pos["type"] == "buy"
         pdiff = price - pos["entry"]
@@ -175,9 +175,9 @@ class ScalperBot:
                 except Exception:
                     still_open = True
                 if still_open:
-                    return
+                    return False
                 self._resolve_position_closed(current_time)
-                return
+                return True
 
         pos["_last_price"] = price
         pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
@@ -192,6 +192,7 @@ class ScalperBot:
             extra={"trade": pos, "partial_reason": reason, "partial_lots": lots},
         )
         self.telegram.alert_partial(pos, reason, lots, price, profit, pos["pnl"])
+        return True
 
     def _resolve_position_closed(self, current_time: datetime) -> None:
         pos = self._position
@@ -295,7 +296,10 @@ class ScalperBot:
             # TP1: close first tranche at 1:1, move SL to BE
             if not self._position.get("tp1_hit", False) and \
                ((is_buy and bar["high"] >= tp1_level) or (not is_buy and bar["low"] <= tp1_level)):
-                self._close_partial(self._position["tp1_lots"], tp1_level, "tp1", current_time)
+                if not self._close_partial(self._position["tp1_lots"], tp1_level, "tp1", current_time):
+                    continue
+                if self._position is None:
+                    break
                 self._position["tp1_hit"] = True
                 self._position["tp_hit_bar"] = j
                 if self._position["remaining_lots"] > 0:
@@ -314,9 +318,9 @@ class ScalperBot:
                    self._position["remaining_lots"] > 0:
                     trail_dist = sl_dist * self.settings.trail_multiplier
                     if is_buy:
-                        self._position["trail_level"] = bar["high"] - trail_dist
+                        self._position["trail_level"] = max(self._position["entry"], bar["high"] - trail_dist)
                     else:
-                        self._position["trail_level"] = bar["low"] + trail_dist
+                        self._position["trail_level"] = min(self._position["entry"], bar["low"] + trail_dist)
                     self._position["trailing_activated"] = True
                     self._position["trail_activation_bar"] = j
 
@@ -328,15 +332,18 @@ class ScalperBot:
                ((is_buy and bar["high"] >= tp2_level) or (not is_buy and bar["low"] <= tp2_level)):
                 lots = min(self._position["tp2_lots"], self._position["remaining_lots"])
                 if lots > 0:
-                    self._close_partial(lots, tp2_level, "tp2", current_time)
+                    if not self._close_partial(lots, tp2_level, "tp2", current_time):
+                        continue
+                    if self._position is None:
+                        break
                     self._position["tp2_hit"] = True
                     self._position["tp_hit_bar"] = j
                     if self._position["remaining_lots"] > 0:
                         trail_dist = sl_dist * self.settings.trail_multiplier
                         if is_buy:
-                            self._position["trail_level"] = bar["high"] - trail_dist
+                            self._position["trail_level"] = max(self._position["entry"], bar["high"] - trail_dist)
                         else:
-                            self._position["trail_level"] = bar["low"] + trail_dist
+                            self._position["trail_level"] = min(self._position["entry"], bar["low"] + trail_dist)
                         self._position["trailing_activated"] = True
                         self._position["trail_activation_bar"] = j
 
@@ -346,11 +353,11 @@ class ScalperBot:
                 if is_buy:
                     new_trail = bar["high"] - trail_dist
                     if new_trail > self._position["trail_level"]:
-                        self._position["trail_level"] = new_trail
+                        self._position["trail_level"] = max(self._position["entry"], new_trail)
                 else:
                     new_trail = bar["low"] + trail_dist
                     if new_trail < self._position["trail_level"]:
-                        self._position["trail_level"] = new_trail
+                        self._position["trail_level"] = min(self._position["entry"], new_trail)
 
             # Check trailing stop — skip activation bar
             if self._position and self._position.get("trailing_activated") and self._position["remaining_lots"] > 0 and \
