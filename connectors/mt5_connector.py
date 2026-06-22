@@ -61,6 +61,7 @@ class MT5Connector:
                 )
             logger.info(f"Logged into account {self.settings.mt5_login}")
 
+        self._ensure_terminal_window()
         self._ensure_auto_trading_enabled()
 
         self._connected = True
@@ -119,20 +120,36 @@ class MT5Connector:
             results.append(hwnd)
 
     @staticmethod
+    def _ensure_terminal_window() -> None:
+        if not _HAS_PYWIN32:
+            return
+        try:
+            hwnds: List[int] = []
+            win32gui.EnumWindows(MT5Connector._enum_mt5_windows, hwnds)
+            if hwnds:
+                for hwnd in hwnds:
+                    placement = win32gui.GetWindowPlacement(hwnd)
+                    if placement[1] == win32con.SW_SHOWMINIMIZED:
+                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                    win32gui.SetForegroundWindow(hwnd)
+                return
+            logger.warning("No MetaTrader window found — launching MT5...")
+            from config.settings import get_settings
+            mt5_path = get_settings().mt5_path
+            if isinstance(mt5_path, str) and os.path.isfile(mt5_path):
+                subprocess.Popen([mt5_path])
+                time.sleep(5)
+        except Exception as e:
+            logger.warning(f"Could not ensure MT5 window: {e}")
+
+    @staticmethod
     def _enable_autotrading_pywin32() -> None:
         try:
             hwnds: List[int] = []
             win32gui.EnumWindows(MT5Connector._enum_mt5_windows, hwnds)
             if not hwnds:
-                logger.warning("No MetaTrader window found — launching MT5...")
-                try:
-                    from config.settings import get_settings
-                    mt5_path = get_settings().mt5_path
-                    subprocess.Popen([mt5_path])
-                    time.sleep(5)
-                    win32gui.EnumWindows(MT5Connector._enum_mt5_windows, hwnds)
-                except Exception as launch_err:
-                    logger.warning(f"Could not launch MT5: {launch_err}")
+                MT5Connector._ensure_terminal_window()
+                win32gui.EnumWindows(MT5Connector._enum_mt5_windows, hwnds)
             if not hwnds:
                 logger.warning("No MetaTrader window found after launch")
                 return

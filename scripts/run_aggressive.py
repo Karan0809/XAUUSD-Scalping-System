@@ -676,6 +676,17 @@ class AggressiveBot:
                         logger.warning("Failed to get account info, retrying...")
                         time.sleep(5)
                         continue
+
+                    # Re-verify account — M15 data loading can cause MT5 to revert
+                    if self.settings.mt5_login and acct["login"] != self.settings.mt5_login:
+                        logger.warning(f"Account reverted to {acct['login']}, re-logging as {self.settings.mt5_login}")
+                        mt5.login(
+                            login=self.settings.mt5_login,
+                            password=self.settings.mt5_password,
+                            server=self.settings.mt5_server if self.settings.mt5_server else None,
+                        )
+                        continue
+
                     allowed, cb_reason = self.risk_mgr.check_entry_allowed(acct["balance"])
                     if not allowed:
                         logger.warning(f"CB blocked: {cb_reason}")
