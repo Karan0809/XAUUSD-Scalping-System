@@ -91,10 +91,16 @@ class MT5Connector:
                 f"AutoTrading disabled (attempt {attempt + 1}/3), "
                 f"enabling..."
             )
+
             if _HAS_PYWIN32:
                 MT5Connector._enable_autotrading_pywin32()
-            else:
-                MT5Connector._enable_autotrading_powershell()
+                time.sleep(2)
+                term = mt5.terminal_info()
+                if term is not None and term.trade_allowed:
+                    logger.info("AutoTrading enabled successfully")
+                    return
+
+            MT5Connector._enable_autotrading_powershell()
 
             time.sleep(2)
             term = mt5.terminal_info()
