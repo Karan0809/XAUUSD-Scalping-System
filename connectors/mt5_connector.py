@@ -36,6 +36,7 @@ class MT5Connector:
         if self._connected:
             return True
 
+        MT5Connector._pre_enable_autotrading_config(self.settings.mt5_path)
         # Initialize terminal connection (any account)
         init = mt5.initialize(path=self.settings.mt5_path, timeout=30000)
         if not init:
@@ -62,6 +63,19 @@ class MT5Connector:
 
         self._ensure_terminal_window(self.settings.mt5_path)
         self._ensure_auto_trading_enabled()
+
+        if not self._check_autotrading_enabled():
+            logger.warning("AutoTrading still disabled — trying config file modification...")
+            mt5.shutdown()
+            MT5Connector._enable_autotrading_via_config(self.settings.mt5_path)
+            init = mt5.initialize(path=self.settings.mt5_path, timeout=30000)
+            if init and self.settings.mt5_login and self.settings.mt5_password:
+                mt5.login(
+                    login=self.settings.mt5_login,
+                    password=self.settings.mt5_password,
+                    server=self.settings.mt5_server if self.settings.mt5_server else None,
+                )
+            self._ensure_auto_trading_enabled()
 
         self._connected = True
         info = mt5.account_info()
@@ -116,6 +130,55 @@ class MT5Connector:
             "Enable it manually: MT5 → Tools → Options → Expert Advisors "
             "→ check 'Allow Automated Trading'"
         )
+
+    @staticmethod
+    def _check_autotrading_enabled() -> bool:
+        term = mt5.terminal_info()
+        return term is not None and term.trade_allowed
+
+    @staticmethod
+    def _pre_enable_autotrading_config(mt5_path: Optional[str] = None) -> None:
+        MT5Connector._enable_autotrading_via_config(mt5_path)
+
+    @staticmethod
+    def _enable_autotrading_via_config(mt5_path: Optional[str] = None) -> bool:
+        appdata = os.environ.get('APPDATA', '')
+        terminal_dir = os.path.join(appdata, 'MetaQuotes', 'Terminal') if appdata else ''
+        if not terminal_dir or not os.path.isdir(terminal_dir):
+            return False
+
+        modified = False
+        try:
+            for entry in os.listdir(terminal_dir):
+                entry_path = os.path.join(terminal_dir, entry)
+                if not os.path.isdir(entry_path):
+                    continue
+
+                for candidate in (
+                    os.path.join(entry_path, 'config', 'origin.cfg'),
+                    os.path.join(entry_path, 'origin.cfg'),
+                    os.path.join(entry_path, 'config', 'terminal.cfg'),
+                ):
+                    if not os.path.isfile(candidate):
+                        continue
+
+                    with open(candidate, 'r', encoding='utf-8-sig') as f:
+                        content = f.read()
+
+                    if mt5_path and mt5_path not in content:
+                        continue
+
+                    new_content = content.replace('AutoTrading=0', 'AutoTrading=1')
+                    if new_content != content:
+                        with open(candidate, 'w', encoding='utf-8') as f:
+                            f.write(new_content)
+                        logger.info(f"Set AutoTrading=1 in {candidate}")
+                        modified = True
+                        break
+        except Exception as e:
+            logger.warning(f"Config file modification failed: {e}")
+
+        return modified
 
     @staticmethod
     def _enum_mt5_windows(hwnd: int, results: List[int]) -> None:

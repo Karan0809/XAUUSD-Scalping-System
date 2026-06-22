@@ -331,6 +331,9 @@ class TestAutoTradingEnable(unittest.TestCase):
         self.has_pywin32_patcher = patch("connectors.mt5_connector._HAS_PYWIN32", False)
         self.has_pywin32_patcher.start()
 
+        self.config_patcher = patch("connectors.mt5_connector.MT5Connector._enable_autotrading_via_config", return_value=False)
+        self.config_patcher.start()
+
         self.settings_patcher = patch("connectors.mt5_connector.get_settings")
         self.mock_settings = self.settings_patcher.start()
         mock_settings_instance = MagicMock()
@@ -348,6 +351,7 @@ class TestAutoTradingEnable(unittest.TestCase):
         self.settings_patcher.stop()
         self.subprocess_patcher.stop()
         self.has_pywin32_patcher.stop()
+        self.config_patcher.stop()
 
     def test_autotrading_already_enabled(self):
         self.mock_mt5.terminal_info.return_value = FakeMT5TerminalInfo()
@@ -365,7 +369,7 @@ class TestAutoTradingEnable(unittest.TestCase):
                 trade_allowed = True
             return Info()
 
-        self.mock_mt5.terminal_info.side_effect = [term, terminal_info_side_effect()]
+        self.mock_mt5.terminal_info.side_effect = [term, terminal_info_side_effect(), terminal_info_side_effect()]
 
         self.conn._connected = False
         self.conn.connect()
@@ -380,7 +384,7 @@ class TestAutoTradingEnable(unittest.TestCase):
                 trade_allowed = True
             return Info()
 
-        self.mock_mt5.terminal_info.side_effect = [term, terminal_false_then_true()]
+        self.mock_mt5.terminal_info.side_effect = [term, terminal_false_then_true(), terminal_false_then_true()]
         self.mock_subprocess.side_effect = Exception("PowerShell not available")
 
         self.conn._connected = False

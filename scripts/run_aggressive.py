@@ -237,7 +237,7 @@ class AggressiveBot:
         pos["pnl"] = round(pos.get("pnl", 0) + profit, 2)
         pos["remaining_lots"] = max(0, round(pos["remaining_lots"] - lots, 2))
         pos["_last_price"] = price
-        if pos["remaining_lots"] <= 0:
+        if pos["remaining_lots"] < 0.001:
             pos["exit"] = price
 
         logger.info(f"PARTIAL {reason}: {lots:.2f} @ {price:.2f} P=${profit:.2f} (cum: ${pos['pnl']:.2f})")
@@ -392,7 +392,7 @@ class AggressiveBot:
             # SL/BE check — skip the bar that triggered TP1
             if not trail_fired and pos["remaining_lots"] > 0 and \
                j != pos.get("tp_hit_bar") and \
-               ((is_buy and bar["low"] <= (pos.get("sl") or 0)) or (not is_buy and bar["high"] >= (pos.get("sl") or 99999))):
+               ((is_buy and bar["low"] <= pos["sl"]) or (not is_buy and bar["high"] >= pos["sl"])):
                 if self._close_partial(pos["remaining_lots"], pos["sl"],
                                        "be" if pos.get("tp1_hit") else "sl", current_time) and self._position is None:
                     return
@@ -638,15 +638,6 @@ class AggressiveBot:
                 self._manage_position(rates, i, current_time)
 
                 if self._position is None:  # and self._trades_today < MAX_TRADES_PER_DAY:
-                    # Future limits (uncomment when ready):
-                    # if self.risk_mgr._daily_loss_sum / max(acct["balance"], 1) * 100 >= self.settings.circuit_breaker_max_daily_loss_pct:
-                    #     logger.warning("Daily loss limit reached")
-                    #     time.sleep(60)
-                    #     continue
-                    # if self.risk_mgr._consecutive_losses >= self.settings.circuit_breaker_max_consecutive_losses:
-                    #     logger.warning("Consecutive losses limit reached")
-                    #     time.sleep(60)
-                    #     continue
                     if self.news_filter is not None:
                         in_blackout, reason = self.news_filter.is_blackout(now)
                         if in_blackout:

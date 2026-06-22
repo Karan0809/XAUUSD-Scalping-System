@@ -1,6 +1,6 @@
-# XAUUSD Scalper
+# XAUUSD Scalper — Aggressive M1
 
-Multi-session scalper for XAUUSD on MetaTrader 5 with two bots: an ORB session-based breakout bot and an aggressive M1 zone+momentum scalper.
+Multi-session scalper for XAUUSD on MetaTrader 5 using an aggressive M1 zone + momentum strategy. Now running as a **single bot** (aggressive only) for simplicity and reliability.
 
 ## Strategy
 
@@ -99,40 +99,24 @@ On every poll, the bot re-examines all M5 bars since entry (from the position's 
 
 ## Backtest Results (Sep 2025 – Jun 2026)
 
-Backtested on live M5/M1 XAUUSD data across all sessions (Asia + London + NY). Commission: $3.50/lot/side. All tests use tiered fixed risk ($10→$15→$20→$30→$50 based on profit milestones), 0.5 lots hard cap, 1-2 pip entry slippage, 0-1 pip exit slippage, `max_spread` from settings (default 60.0), and `trail_multiplier=0.2`.
-
-### ORB Scalper ($1,000 start)
-
-Trades all sessions using ORB pipeline (breakout pullback, aggressive FVG, range reversal). Each session allows at most 1 entry. Lot size determined by tiered fixed risk / SL distance, capped at 0.5 lots.
-
-| Metric | Result |
-|---|---|
-| **Total Trades** | 1,292 |
-| **Win Rate** | 84.06% |
-| **Total Profit** | **$67,594** |
-| **Profit Factor** | 28.71 |
-| **Max Drawdown** | $20.41 (1.00%) |
-| **Avg Win / Loss** | +$64.49 / -$11.84 |
-| **Largest Win / Loss** | +$644.07 / -$12.25 |
-| **Avg Bars Held** | 1.5 |
-| **Return** | 6,759% |
+Backtested on live M1 XAUUSD data across all sessions (Asia + London + NY). Commission: $3.50/lot/side. Uses tiered fixed risk ($10→$15→$20→$30→$50 based on profit milestones), 0.5 lots hard cap, 1-2 pip entry slippage, 0-1 pip exit slippage, `max_spread` from settings (default 60.0), and `trail_multiplier=0.2`.
 
 ### Aggressive M1 ($5,000 start)
 
-Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-trend alignment + momentum check, and session filter (Asia + London + NY). Zone SL with 15-pip buffer (20-pip min, 50-pip fallback, 80-pip cap). 50/50 + trailing exit model with trail capped at entry.
+Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-trend alignment + momentum check, and session filter (Asia + London + NY). Zone SL with no proximity filter, 15-pip buffer, 20-pip minimum, 80-pip cap. 50/50 + trailing exit model.
 
 | Metric | Result |
 |---|---|
-| **Total Trades** | 1,483 |
-| **Win Rate** | 65.81% |
-| **Total Profit** | **$63,699** |
-| **Profit Factor** | 5.78 |
-| **Max Drawdown** | $86.29 (1.00%) |
-| **Avg Win / Loss** | +$78.92 / -$26.28 |
-| **Largest Win / Loss** | +$2,106.71 / -$27.25 |
-| **Avg Bars Held** | 1.5 |
-| **Filters** | Zone=0 Mom=3,803 Trend=12,600 Spread=242 CB=0 News=0 |
-| **Return** | 1,274% |
+| **Total Trades** | 1,470 |
+| **Win Rate** | 78.03% |
+| **Total Profit** | **$72,687** |
+| **Profit Factor** | 19.74 |
+| **Max Drawdown** | $36.09 (0.32%) |
+| **Avg Win / Loss** | +$66.75 / -$12.01 |
+| **Largest Win / Loss** | +$2,100.71 / -$12.24 |
+| **Avg Bars Held** | 1.4 |
+| **Filters** | Zone=0 Mom=3,679 Trend=12,761 Spread=245 CB=0 News=0 |
+| **Return** | 1,454% |
 
 ### Key Fixes Applied
 
@@ -177,6 +161,9 @@ Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-
 | **Telegram heartbeat fires immediately on startup** | First loop iteration sent heartbeat — blocked startup 20s. Fixed. |
 | **Telegram 10s timeout blocks bot** | Timeout reduced to 5s with exponential backoff. Fixed. |
 | **Ticket mismatch — deal vs position** | Used `result.deal` as position ticket but it's a deal ID — never matched `get_positions()`. Fixed by using `result.order`. |
+| **Removed zone-SL proximity filter** | `_get_zone_signal()` had a 0.80 filter rejecting zones within 0.80 of price — set `zone_sl=None` on ALL signals. Removed. |
+| **AutoTrading 3-layer fallback** | pywin32 `SetForegroundWindow`+`SendKeys` → PowerShell `AppActivate`+`SendKeys` → direct `origin.cfg` config modification + terminal restart. Handles headless VPS where no MT5 window is visible. |
+| **Per-trade-loop account re-verification** | After `get_account_info()`, checks `acct["login"]` matches env setting. M15 data loads reverting MT5 login are detected and corrected mid-loop. |
 
 ## Project Structure
 
@@ -197,10 +184,8 @@ Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-
 ├── log_utils/
 │   └── logger_setup.py          # Structured JSON logging (console + file)
 ├── scripts/
-│   ├── backtest.py              # Historical backtester (ORB)
-│   ├── backtest_aggressive.py   # Historical backtester (Aggressive M1)
-│   ├── run_live.py              # Live trading bot (ORB)
-│   └── run_aggressive.py        # Live trading bot (Aggressive M1)
+│   ├── backtest_aggressive.py   # Historical backtester
+│   └── run_aggressive.py        # Live trading bot
 ├── telegram/
 │   └── alerts.py                # Telegram notifications (open/close/error/heartbeat)
 ├── tests/
@@ -232,37 +217,26 @@ pip install -r requirements.txt
 
 ### Configuration
 
-Create `.env` (or `.env.orb` / `.env.aggressive` for separate accounts):
+Create `.env` (or `.env.aggressive`):
 
 | Variable | Description |
 |---|---|
 | `MT5_LOGIN` | MT5 account number |
 | `MT5_PASSWORD` | MT5 account password |
-| `MT5_SERVER` | Broker server (e.g. `ICMarkets-Demo`, `MetaQuotes-Demo`) |
+| `MT5_SERVER` | Broker server (e.g. `MetaQuotes-Demo`) |
 | `MT5_PATH` | Path to terminal64.exe |
 | `MT5_PORTABLE` | Set `true` to run terminal in portable mode (stores data locally, not in AppData) — required for separate copies of MT5 |
 | `MONGO_URI` | MongoDB connection string |
 | `TELEGRAM_TOKEN` | Telegram bot token |
 | `TELEGRAM_CHAT_ID` | Telegram chat ID (comma-separated for multiple) |
 
-Run multiple bots with different accounts using `--env`:
+Run with the env file:
 
 ```bash
-# ORB bot (uses .env by default)
-python scripts/run_live.py
-
-# ORB bot with explicit env file
-python scripts/run_live.py --env .env.orb
-
-# Aggressive bot on a different account
 python scripts/run_aggressive.py --env .env.aggressive
-
-# Run both simultaneously (separate terminal windows)
-start powershell python scripts/run_live.py --env .env.orb
-start powershell python scripts/run_aggressive.py --env .env.aggressive
 ```
 
-The `--env` path resolves relative to the project root (not the working directory). Each bot connects to its own MT5 terminal via `mt5.login()` after initialization — no shared sessions between bots.
+The `--env` path resolves relative to the project root (not the working directory).
 
 ### Key Settings (`config/settings.py`)
 
@@ -279,20 +253,16 @@ The `--env` path resolves relative to the project root (not the working director
 | `news_filter_enabled` | False | Enable ForexFactory news blackout (US Eastern → UTC) |
 | `news_blackout_minutes` | 30 | Minutes before/after high-impact event to block entry |
 | `backtest_commission` | 3.5 | Commission per lot per side ($) |
-
 ## Usage
 
 ### Live Trading
 
 ```bash
-# ORB scalper (default .env)
-python scripts/run_live.py
-
-# Aggressive M1 on different account
 python scripts/run_aggressive.py --env .env.aggressive
 ```
 
-Both bots:
+The bot:
+
 1. Connect to MT5, MongoDB, Telegram on startup
 2. Load 90 days of M15 data and build institutional zones
 3. **Orphan recovery:** Scans for existing MT5 positions on startup — adopts into management (prevents duplicate trades after crash/restart)
@@ -301,8 +271,6 @@ Both bots:
 6. Manage open positions via bar-by-bar iteration from `open_time` (TP1, trail, SL/BE)
 7. Send Telegram alerts for open, close, error, and heartbeat
 8. Close open positions at **17:00 UTC Friday**, disconnect, sleep until Monday 00:00 UTC
-
-**ORB bot** (`run_live.py`): Scans sessions (Asia → London → NY) for breakout/pullback/reversal signals on M5.
 
 **Aggressive bot** (`run_aggressive.py`): Scans M1 bars for zone-based entries with HH/HL + EMA50 trend filter and M1 micro-trend alignment.
 
@@ -322,14 +290,10 @@ python -m pytest tests/ -k TestMongoWriteFailure -v
 ### Backtesting
 
 ```bash
-# ORB Scalper
-python scripts/backtest.py --start 2025-09-01 --end 2026-06-03 --balance 1000
-
-# Aggressive M1 (min_sl is default now)
-python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-19 --balance 5000 --risk 1.2 --sl-mode min_sl --sl-pips 50 --zone-buffer 0.15 --session-filter
+python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-22 --balance 5000 --risk 1.2 --sl-mode min_sl --zone-buffer 0.15 --session-filter
 ```
 
-Both backtests use tiered fixed risk, 0.5 max lots, slippage model, and read `max_spread` from settings. Results saved as JSON with `--output`.
+The backtest uses tiered fixed risk, 0.5 max lots, slippage model, and reads `max_spread` from settings. Results saved as JSON with `--output`.
 
 - `--risk <pct>` — risk percent
 - `--sl-mode min_sl` — zone-based SL with minimum distance floor
@@ -377,7 +341,7 @@ Both backtests use tiered fixed risk, 0.5 max lots, slippage model, and read `ma
 - **Aggressive bot TP is a far safety net** (500 pips). Prevents MT5 from auto-closing at TP1 level. The bot manages all exits via `order_send`.
 - **Partial close failure guard.** Retries without `type_filling` on failure, falls back to finding actual position ticket from MT5.
 - **Orphan position recovery.** On startup, scans for existing MT5 positions and adopts them — prevents duplicate opens after crash/restart.
-- **Multi-account isolation.** Each bot uses `mt5.login()` after `initialize()` for explicit account connection. Separate MT5 copies with `MT5_PORTABLE=true`.
-- **AutoTrading auto-enable.** Sends Alt+T via Win32 API if `trade_allowed` is False after connect.
+- **Multi-account isolation.** Each bot uses `mt5.login()` after `initialize()` for explicit account connection.
+- **AutoTrading auto-enable.** 3-layer fallback: pywin32 `SetForegroundWindow`+`SendKeys` → PowerShell `AppActivate`+`SendKeys` → direct `origin.cfg` config modification + terminal restart. Handles headless VPS where no MT5 window is visible.
 - **Settings cache ordering.** `setup_logging()` called after bot init so the correct env file populates the cache.
 - **Logs are line-buffered** for real-time terminal output.**

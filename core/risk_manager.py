@@ -37,13 +37,12 @@ class RiskManager:
         if profit < 0:
             self._daily_loss_sum += abs(profit)
             self._consecutive_losses += 1
-            # NOTE: Disabled for demo testing
-            # if self._consecutive_losses >= self._max_consecutive_losses:
-            #     self._blocked_today = True
-            #     logger.warning(
-            #         f"RiskManager: {self._consecutive_losses} consecutive losses, "
-            #         f"blocked for rest of day"
-            #     )
+            if self._consecutive_losses >= self._max_consecutive_losses:
+                self._blocked_today = True
+                logger.warning(
+                    f"RiskManager: {self._consecutive_losses} consecutive losses, "
+                    f"blocked for rest of day"
+                )
         else:
             self._consecutive_losses = 0
 
@@ -66,9 +65,42 @@ class RiskManager:
         return self._max_drawdown_pct
 
     def check_entry_allowed(self, balance: float) -> Tuple[bool, Optional[str]]:
-        # NOTE: Circuit breaker disabled for demo testing
-        if balance > self._peak_balance:
-            self._peak_balance = balance
+        # NOTE: Demo mode — all risk limits disabled
+        # Uncomment blocks below for live trading:
+        #
+        # if self._is_killed:
+        #     return False, "Drawdown limit exceeded — killed"
+        #
+        # if self._consecutive_losses >= self._max_consecutive_losses:
+        #     self._blocked_today = True
+        #     reason = f"Blocked: {self._consecutive_losses} consecutive losses"
+        #     logger.warning(f"RiskManager: {reason}")
+        #     return False, reason
+        #
+        # if self._blocked_today:
+        #     return False, "Blocked for rest of day"
+        #
+        # if balance > self._peak_balance:
+        #     self._peak_balance = balance
+        #
+        # daily_loss_pct = (self._daily_loss_sum / balance * 100) if balance > 0 else 0
+        # max_daily = self._get_effective_max_daily_loss_pct(balance)
+        # if daily_loss_pct >= max_daily:
+        #     self._blocked_today = True
+        #     reason = f"Daily loss {daily_loss_pct:.1f}% exceeds {max_daily}% loss limit"
+        #     logger.warning(f"RiskManager: blocked — {reason}")
+        #     return False, reason
+        #
+        # peak = max(self._peak_balance, balance)
+        # if peak > 0:
+        #     drawdown_pct = (peak - balance) / peak * 100
+        #     max_dd = self._get_effective_max_drawdown_pct(balance)
+        #     if drawdown_pct >= max_dd:
+        #         self._is_killed = True
+        #         reason = f"Drawdown {drawdown_pct:.1f}% exceeds {max_dd}% limit — killed"
+        #         logger.warning(f"RiskManager: {reason}")
+        #         return False, reason
+
         return True, None
 
     @property
