@@ -328,6 +328,9 @@ class TestAutoTradingEnable(unittest.TestCase):
         self.subprocess_patcher = patch("connectors.mt5_connector.subprocess.run")
         self.mock_subprocess = self.subprocess_patcher.start()
 
+        self.has_pywin32_patcher = patch("connectors.mt5_connector._HAS_PYWIN32", False)
+        self.has_pywin32_patcher.start()
+
         self.settings_patcher = patch("connectors.mt5_connector.get_settings")
         self.mock_settings = self.settings_patcher.start()
         mock_settings_instance = MagicMock()
@@ -344,6 +347,7 @@ class TestAutoTradingEnable(unittest.TestCase):
         self.mt5_patcher.stop()
         self.settings_patcher.stop()
         self.subprocess_patcher.stop()
+        self.has_pywin32_patcher.stop()
 
     def test_autotrading_already_enabled(self):
         self.mock_mt5.terminal_info.return_value = FakeMT5TerminalInfo()
@@ -392,12 +396,12 @@ class TestAutoTradingEnable(unittest.TestCase):
     def test_powershell_command_structure(self):
         term = FakeMT5TerminalInfo()
         term.trade_allowed = False
-        self.mock_mt5.terminal_info.side_effect = [term, term, term]
+        self.mock_mt5.terminal_info.return_value = term
 
         self.conn._connected = False
         self.conn.connect()
-        self.mock_subprocess.assert_called_once()
-        args, kwargs = self.mock_subprocess.call_args
+        self.assertTrue(self.mock_subprocess.called)
+        args, kwargs = self.mock_subprocess.call_args_list[0]
         cmd = args[0]
         self.assertIn("powershell", cmd[0].lower())
         self.assertIn("SendKeys", cmd[2])

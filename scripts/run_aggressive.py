@@ -143,8 +143,6 @@ class AggressiveBot:
                     best_dist = d
                     direction = "sell"
                     zone_sl = z.zone_high + 0.15
-        if direction and zone_sl is not None and abs(zone_sl - price) > 0.80:
-            zone_sl = None
         return direction, zone_sl
 
     def _check_momentum(self, bar: Dict[str, float], prev_close: float, direction: str) -> bool:
@@ -662,6 +660,16 @@ class AggressiveBot:
                         logger.warning("Failed to get account info, retrying...")
                         time.sleep(5)
                         continue
+
+                    if self.settings.mt5_login and acct["login"] != self.settings.mt5_login:
+                        logger.warning(f"Account reverted to {acct['login']}, re-logging as {self.settings.mt5_login}")
+                        mt5.login(
+                            login=self.settings.mt5_login,
+                            password=self.settings.mt5_password,
+                            server=self.settings.mt5_server if self.settings.mt5_server else None,
+                        )
+                        continue
+
                     allowed, cb_reason = self.risk_mgr.check_entry_allowed(acct["balance"])
                     if not allowed:
                         logger.warning(f"CB blocked: {cb_reason}")
