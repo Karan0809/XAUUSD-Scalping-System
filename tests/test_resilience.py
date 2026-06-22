@@ -318,6 +318,9 @@ class TestMT5CrashRecovery(unittest.TestCase):
 
 class TestAutoTradingEnable(unittest.TestCase):
     def setUp(self):
+        self.pywin32_patcher = patch("connectors.mt5_connector._HAS_PYWIN32", False)
+        self.pywin32_patcher.start()
+
         self.mt5_patcher = patch("connectors.mt5_connector.mt5")
         self.mock_mt5 = self.mt5_patcher.start()
         self.mock_mt5.terminal_info.return_value = FakeMT5TerminalInfo()
@@ -341,6 +344,7 @@ class TestAutoTradingEnable(unittest.TestCase):
         self.conn = MT5Connector()
 
     def tearDown(self):
+        self.pywin32_patcher.stop()
         self.mt5_patcher.stop()
         self.settings_patcher.stop()
         self.subprocess_patcher.stop()

@@ -9,6 +9,15 @@ import MetaTrader5 as mt5
 import pandas as pd
 import numpy as np
 
+try:
+    import win32gui
+    import win32com.client
+    import win32api
+    import win32con
+    _HAS_PYWIN32 = True
+except ImportError:
+    _HAS_PYWIN32 = False
+
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -80,37 +89,18 @@ class MT5Connector:
 
             logger.warning(
                 f"AutoTrading disabled (attempt {attempt + 1}/3), "
-                f"enabling via PowerShell..."
+                f"enabling..."
             )
-            try:
-                subprocess.run([
-                    "powershell",
-                    "-Command",
-                    "$w = New-Object -ComObject wscript.shell; "
-                    "$titles = @(); "
-                    "Get-Process terminal64,metatrader* -ErrorAction SilentlyContinue | "
-                    "Where-Object { $_.MainWindowTitle -match 'MetaTrader|MT5' } | "
-                    "ForEach-Object { $titles += $_.MainWindowTitle }; "
-                    "if ($titles.Count -eq 0) { "
-                    "  Get-Process | Where-Object { $_.MainWindowTitle -match 'MetaTrader|MT5' } | "
-                    "  ForEach-Object { $titles += $_.MainWindowTitle } "
-                    "}; "
-                    "foreach ($t in $titles) { "
-                    "  try { "
-                    "    $null = $w.AppActivate($t); "
-                    "    Start-Sleep -Milliseconds 500; "
-                    "    $w.SendKeys('%t'); "
-                    "    Start-Sleep -Seconds 1; "
-                    "  } catch {} "
-                    "}"
-                ], capture_output=True, timeout=15)
-                time.sleep(2)
-                term = mt5.terminal_info()
-                if term is not None and term.trade_allowed:
-                    logger.info("AutoTrading enabled successfully")
-                    return
-            except Exception as e:
-                logger.error(f"AutoTrading enable attempt {attempt + 1} failed: {e}")
+            if _HAS_PYWIN32:
+                MT5Connector._enable_autotrading_pywin32()
+            else:
+                MT5Connector._enable_autotrading_powershell()
+
+            time.sleep(2)
+            term = mt5.terminal_info()
+            if term is not None and term.trade_allowed:
+                logger.info("AutoTrading enabled successfully")
+                return
 
             if attempt < 2:
                 time.sleep(3 * (attempt + 1))
@@ -120,6 +110,65 @@ class MT5Connector:
             "Enable it manually: MT5 → Tools → Options → Expert Advisors "
             "→ check 'Allow Automated Trading'"
         )
+
+    @staticmethod
+    def _enum_mt5_windows(hwnd: int, results: List[int]) -> None:
+        if win32gui.IsWindowVisible(hwnd) and "MetaTrader" in win32gui.GetWindowText(hwnd):
+            results.append(hwnd)
+
+    @staticmethod
+    def _enable_autotrading_pywin32() -> None:
+        try:
+            hwnds: List[int] = []
+            win32gui.EnumWindows(MT5Connector._enum_mt5_windows, hwnds)
+            if not hwnds:
+                logger.warning("No MetaTrader window found")
+                return
+
+            shell = win32com.client.Dispatch("WScript.Shell")
+            for hwnd in hwnds:
+                try:
+                    placement = win32gui.GetWindowPlacement(hwnd)
+                    if placement[1] == win32con.SW_SHOWMINIMIZED:
+                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                        time.sleep(0.5)
+
+                    win32gui.SetForegroundWindow(hwnd)
+                    time.sleep(0.3)
+                    shell.SendKeys("%t")
+                    time.sleep(1)
+                except Exception as e:
+                    logger.warning(f"SendKeys failed for hwnd {hwnd}: {e}")
+        except Exception as e:
+            logger.error(f"pywin32 auto-trading enable failed: {e}")
+
+    @staticmethod
+    def _enable_autotrading_powershell() -> None:
+        logger.warning("Falling back to PowerShell SendKeys...")
+        try:
+            subprocess.run([
+                "powershell",
+                "-Command",
+                "$w = New-Object -ComObject wscript.shell; "
+                "$titles = @(); "
+                "Get-Process terminal64,metatrader* -ErrorAction SilentlyContinue | "
+                "Where-Object { $_.MainWindowTitle -match 'MetaTrader|MT5' } | "
+                "ForEach-Object { $titles += $_.MainWindowTitle }; "
+                "if ($titles.Count -eq 0) { "
+                "  Get-Process | Where-Object { $_.MainWindowTitle -match 'MetaTrader|MT5' } | "
+                "  ForEach-Object { $titles += $_.MainWindowTitle } "
+                "}; "
+                "foreach ($t in $titles) { "
+                "  try { "
+                "    $null = $w.AppActivate($t); "
+                "    Start-Sleep -Milliseconds 500; "
+                "    $w.SendKeys('%t'); "
+                "    Start-Sleep -Seconds 1; "
+                "  } catch {} "
+                "}"
+            ], capture_output=True, timeout=15)
+        except Exception as e:
+            logger.error(f"PowerShell auto-trading enable failed: {e}")
 
     def disconnect(self) -> None:
         if self._connected:
