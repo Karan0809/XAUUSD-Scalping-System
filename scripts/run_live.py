@@ -685,17 +685,6 @@ class ScalperBot:
                             logger.warning("Failed to get account info, retrying...")
                             time.sleep(5)
                             continue
-
-                        # Re-verify account — M15 data loading can cause MT5 to revert
-                        if self.settings.mt5_login and acct["login"] != self.settings.mt5_login:
-                            logger.warning(f"Account reverted to {acct['login']}, re-logging as {self.settings.mt5_login}")
-                            mt5.login(
-                                login=self.settings.mt5_login,
-                                password=self.settings.mt5_password,
-                                server=self.settings.mt5_server if self.settings.mt5_server else None,
-                            )
-                            continue
-
                         allowed, cb_reason = self.risk_mgr.check_entry_allowed(acct["balance"])
                         if not allowed:
                             logger.debug(f"Circuit breaker blocked: {cb_reason}")
@@ -756,8 +745,7 @@ class ScalperBot:
                                 if sl_dist > 0.80:
                                     sl_dist = self.SL_PRICE
                             else:
-                                logger.info(f"No zone-based SL found (zone_sl=None), skipping trade")
-                                continue
+                                sl_dist = self.SL_PRICE
 
                             tp_dist = abs(signal["entry"] - signal["tp"])
                             lot_size = self._calc_lot_size(price, price - sl_dist if signal["direction"] == "buy" else price + sl_dist, balance)

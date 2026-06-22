@@ -318,9 +318,6 @@ class TestMT5CrashRecovery(unittest.TestCase):
 
 class TestAutoTradingEnable(unittest.TestCase):
     def setUp(self):
-        self.pywin32_patcher = patch("connectors.mt5_connector._HAS_PYWIN32", False)
-        self.pywin32_patcher.start()
-
         self.mt5_patcher = patch("connectors.mt5_connector.mt5")
         self.mock_mt5 = self.mt5_patcher.start()
         self.mock_mt5.terminal_info.return_value = FakeMT5TerminalInfo()
@@ -344,7 +341,6 @@ class TestAutoTradingEnable(unittest.TestCase):
         self.conn = MT5Connector()
 
     def tearDown(self):
-        self.pywin32_patcher.stop()
         self.mt5_patcher.stop()
         self.settings_patcher.stop()
         self.subprocess_patcher.stop()
@@ -396,11 +392,11 @@ class TestAutoTradingEnable(unittest.TestCase):
     def test_powershell_command_structure(self):
         term = FakeMT5TerminalInfo()
         term.trade_allowed = False
-        self.mock_mt5.terminal_info.side_effect = lambda: term
+        self.mock_mt5.terminal_info.side_effect = [term, term, term]
 
         self.conn._connected = False
         self.conn.connect()
-        self.mock_subprocess.assert_called()
+        self.mock_subprocess.assert_called_once()
         args, kwargs = self.mock_subprocess.call_args
         cmd = args[0]
         self.assertIn("powershell", cmd[0].lower())

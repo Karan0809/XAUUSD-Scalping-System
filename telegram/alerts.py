@@ -57,7 +57,7 @@ class TelegramNotifier:
                     "parse_mode": parse_mode,
                     "disable_web_page_preview": True,
                 }
-                resp = requests.post(url, json=payload, timeout=15)
+                resp = requests.post(url, json=payload, timeout=5)
                 resp.raise_for_status()
                 success = True
             except requests.RequestException as e:
@@ -330,7 +330,7 @@ class TelegramNotifier:
             return False
         try:
             url = f"{self._base_url}/getMe"
-            resp = requests.get(url, timeout=10)
+            resp = requests.get(url, timeout=3)
             return resp.status_code == 200
         except requests.RequestException:
             return False
