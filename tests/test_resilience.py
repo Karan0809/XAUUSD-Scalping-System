@@ -392,11 +392,11 @@ class TestAutoTradingEnable(unittest.TestCase):
     def test_powershell_command_structure(self):
         term = FakeMT5TerminalInfo()
         term.trade_allowed = False
-        self.mock_mt5.terminal_info.side_effect = [term, term, term]
+        self.mock_mt5.terminal_info.side_effect = lambda: term
 
         self.conn._connected = False
         self.conn.connect()
-        self.mock_subprocess.assert_called_once()
+        self.mock_subprocess.assert_called()
         args, kwargs = self.mock_subprocess.call_args
         cmd = args[0]
         self.assertIn("powershell", cmd[0].lower())

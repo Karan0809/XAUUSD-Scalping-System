@@ -745,7 +745,8 @@ class ScalperBot:
                                 if sl_dist > 0.80:
                                     sl_dist = self.SL_PRICE
                             else:
-                                sl_dist = self.SL_PRICE
+                                logger.info(f"No zone-based SL found (zone_sl=None), skipping trade")
+                                continue
 
                             tp_dist = abs(signal["entry"] - signal["tp"])
                             lot_size = self._calc_lot_size(price, price - sl_dist if signal["direction"] == "buy" else price + sl_dist, balance)

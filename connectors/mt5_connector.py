@@ -73,27 +73,53 @@ class MT5Connector:
 
     @staticmethod
     def _ensure_auto_trading_enabled() -> None:
-        term = mt5.terminal_info()
-        if term is not None and term.trade_allowed:
-            return
-
-        logger.warning("AutoTrading disabled, attempting to enable via PowerShell...")
-        try:
-            subprocess.run([
-                "powershell",
-                "-Command",
-                "$w = New-Object -ComObject wscript.shell; "
-                "try { $w.AppActivate((Get-Process terminal64 | Where-Object { $_.MainWindowTitle -match 'MetaTrader' } | Select-Object -First 1).MainWindowTitle); "
-                "Start-Sleep -Milliseconds 800; $w.SendKeys('%t'); Start-Sleep -Seconds 2 } catch {}"
-            ], capture_output=True, timeout=10)
-            time.sleep(2)
+        for attempt in range(3):
             term = mt5.terminal_info()
             if term is not None and term.trade_allowed:
-                logger.info("AutoTrading enabled successfully")
-            else:
-                logger.warning("PowerShell SendKeys did not enable AutoTrading")
-        except Exception as e:
-            logger.error(f"Failed to enable AutoTrading: {e}")
+                return
+
+            logger.warning(
+                f"AutoTrading disabled (attempt {attempt + 1}/3), "
+                f"enabling via PowerShell..."
+            )
+            try:
+                subprocess.run([
+                    "powershell",
+                    "-Command",
+                    "$w = New-Object -ComObject wscript.shell; "
+                    "$titles = @(); "
+                    "Get-Process terminal64,metatrader* -ErrorAction SilentlyContinue | "
+                    "Where-Object { $_.MainWindowTitle -match 'MetaTrader|MT5' } | "
+                    "ForEach-Object { $titles += $_.MainWindowTitle }; "
+                    "if ($titles.Count -eq 0) { "
+                    "  Get-Process | Where-Object { $_.MainWindowTitle -match 'MetaTrader|MT5' } | "
+                    "  ForEach-Object { $titles += $_.MainWindowTitle } "
+                    "}; "
+                    "foreach ($t in $titles) { "
+                    "  try { "
+                    "    $null = $w.AppActivate($t); "
+                    "    Start-Sleep -Milliseconds 500; "
+                    "    $w.SendKeys('%t'); "
+                    "    Start-Sleep -Seconds 1; "
+                    "  } catch {} "
+                    "}"
+                ], capture_output=True, timeout=15)
+                time.sleep(2)
+                term = mt5.terminal_info()
+                if term is not None and term.trade_allowed:
+                    logger.info("AutoTrading enabled successfully")
+                    return
+            except Exception as e:
+                logger.error(f"AutoTrading enable attempt {attempt + 1} failed: {e}")
+
+            if attempt < 2:
+                time.sleep(3 * (attempt + 1))
+
+        logger.warning(
+            "Could not enable AutoTrading after 3 attempts. "
+            "Enable it manually: MT5 → Tools → Options → Expert Advisors "
+            "→ check 'Allow Automated Trading'"
+        )
 
     def disconnect(self) -> None:
         if self._connected:
@@ -265,6 +291,8 @@ class MT5Connector:
         if not self._connected:
             self.connect()
 
+        self._ensure_auto_trading_enabled()
+
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
             raise MT5ConnectorError(f"Cannot get tick for {symbol}")
@@ -312,6 +340,10 @@ class MT5Connector:
                 raise MT5ConnectorError(f"Order send failed: {error}")
             if result.retcode in (0, 1, 10008, 10009):
                 break
+            if attempt == 0 and result.retcode == 10027:
+                logger.warning("Order rejected (10027 — AutoTrading disabled), re-enabling...")
+                self._ensure_auto_trading_enabled()
+                continue
             if attempt == 0 and result.retcode == 10016:
                 logger.warning(f"Order rejected (10016), retrying with fresh tick...")
                 time.sleep(0.5)

@@ -143,8 +143,6 @@ class AggressiveBot:
                     best_dist = d
                     direction = "sell"
                     zone_sl = z.zone_high + 0.15
-        if direction and zone_sl is not None and abs(zone_sl - price) > 0.80:
-            zone_sl = None
         return direction, zone_sl
 
     def _check_momentum(self, bar: Dict[str, float], prev_close: float, direction: str) -> bool:
@@ -438,6 +436,22 @@ class AggressiveBot:
         try:
             self.connector.connect()
             logger.info("MT5 connected")
+            term = mt5.terminal_info()
+            if term is not None and not term.trade_allowed:
+                logger.error(
+                    "AutoTrading is DISABLED in MetaTrader 5. "
+                    "The bot cannot place any orders until this is fixed.\n"
+                    "  To enable: Open MT5 → Tools → Options → Expert Advisors\n"
+                    "    → Check 'Allow Automated Trading' → OK\n"
+                    "  Make sure the terminal window is NOT minimized.\n"
+                    "  The bot will attempt to enable it via Alt+T, but this "
+                    "requires the MT5 window to be visible and focused."
+                )
+                self.telegram.alert_error(
+                    "AutoTrading DISABLED in MT5. "
+                    "Go to Tools → Options → Expert Advisors → "
+                    "enable 'Allow Automated Trading'"
+                )
         except MT5ConnectorError as e:
             logger.error(f"MT5 connection failed: {e}")
             self.telegram.alert_error(f"MT5 connection failed: {e}")
@@ -717,8 +731,8 @@ class AggressiveBot:
                                 else:
                                     sl = price + actual_sl_dist
                             else:
-                                sl = (tick["bid"] - SL_PRICE) if direction == "buy" else (tick["ask"] + SL_PRICE)
-                                actual_sl_dist = SL_PRICE
+                                logger.info(f"No zone-based SL found (zone_sl=None), skipping trade")
+                                continue
                             # Hard clamp: ensure SL is at least MIN_SL_DIST away from price
                             actual_sl_dist = max(actual_sl_dist, MIN_SL_DIST)
                             if direction == "buy":
@@ -809,6 +823,9 @@ class AggressiveBot:
                                     if "10019" in str(e) or "money" in str(e).lower():
                                         self._no_money_cooldown_until = time.time() + 3600
                                         logger.warning("No money — cooling down for 1 hour")
+                                    elif "10027" in str(e) or "autotrading" in str(e).lower():
+                                        self._no_money_cooldown_until = time.time() + 300
+                                        logger.warning("AutoTrading disabled — cooling down for 5 min")
                                     self.telegram.alert_error(f"Order failed: {e}")
 
                 if time.time() - self._last_heartbeat > self.HEARTBEAT_SECONDS:
