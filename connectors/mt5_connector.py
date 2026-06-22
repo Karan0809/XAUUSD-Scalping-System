@@ -113,7 +113,9 @@ class MT5Connector:
 
     @staticmethod
     def _enum_mt5_windows(hwnd: int, results: List[int]) -> None:
-        if win32gui.IsWindowVisible(hwnd) and "MetaTrader" in win32gui.GetWindowText(hwnd):
+        title = win32gui.GetWindowText(hwnd)
+        cls = win32gui.GetClassName(hwnd)
+        if "MetaTrader" in title or "MT5" in title or cls == "MetaTrader":
             results.append(hwnd)
 
     @staticmethod
@@ -122,7 +124,17 @@ class MT5Connector:
             hwnds: List[int] = []
             win32gui.EnumWindows(MT5Connector._enum_mt5_windows, hwnds)
             if not hwnds:
-                logger.warning("No MetaTrader window found")
+                logger.warning("No MetaTrader window found — launching MT5...")
+                try:
+                    from config.settings import get_settings
+                    mt5_path = get_settings().mt5_path
+                    subprocess.Popen([mt5_path])
+                    time.sleep(5)
+                    win32gui.EnumWindows(MT5Connector._enum_mt5_windows, hwnds)
+                except Exception as launch_err:
+                    logger.warning(f"Could not launch MT5: {launch_err}")
+            if not hwnds:
+                logger.warning("No MetaTrader window found after launch")
                 return
 
             shell = win32com.client.Dispatch("WScript.Shell")
