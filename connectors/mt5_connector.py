@@ -61,21 +61,20 @@ class MT5Connector:
                 )
             logger.info(f"Logged into account {self.settings.mt5_login}")
 
-        self._ensure_terminal_window(self.settings.mt5_path)
-        self._ensure_auto_trading_enabled()
-
-        if not self._check_autotrading_enabled():
-            logger.warning("AutoTrading still disabled — trying config file modification...")
+        if not MT5Connector._ensure_auto_trading_enabled(self.settings.mt5_path):
+            logger.warning("AutoTrading still disabled — trying forced config modification...")
             mt5.shutdown()
             MT5Connector._enable_autotrading_via_config(self.settings.mt5_path)
             init = mt5.initialize(path=self.settings.mt5_path, timeout=30000)
+            if not init:
+                init = mt5.initialize()
             if init and self.settings.mt5_login and self.settings.mt5_password:
                 mt5.login(
                     login=self.settings.mt5_login,
                     password=self.settings.mt5_password,
                     server=self.settings.mt5_server if self.settings.mt5_server else None,
                 )
-            self._ensure_auto_trading_enabled()
+            MT5Connector._ensure_auto_trading_enabled(self.settings.mt5_path)
 
         self._connected = True
         info = mt5.account_info()
@@ -95,32 +94,35 @@ class MT5Connector:
         return True
 
     @staticmethod
-    def _ensure_auto_trading_enabled() -> None:
+    def _ensure_auto_trading_enabled(mt5_path: Optional[str] = None) -> bool:
+        term = mt5.terminal_info()
+        if term is not None and term.trade_allowed:
+            return True
+
         for attempt in range(3):
-            term = mt5.terminal_info()
-            if term is not None and term.trade_allowed:
-                return
+            logger.warning(f"AutoTrading disabled (attempt {attempt + 1}/3), enabling...")
 
-            logger.warning(
-                f"AutoTrading disabled (attempt {attempt + 1}/3), "
-                f"enabling..."
-            )
+            # Try config modification + restart first (works on headless servers)
+            if MT5Connector._ensure_autotrading_via_config_with_restart(mt5_path):
+                return True
 
+            # Fallback: window-based methods (requires GUI)
             if _HAS_PYWIN32:
+                MT5Connector._ensure_terminal_window(mt5_path)
                 MT5Connector._enable_autotrading_pywin32()
                 time.sleep(2)
                 term = mt5.terminal_info()
                 if term is not None and term.trade_allowed:
-                    logger.info("AutoTrading enabled successfully")
-                    return
+                    logger.info("AutoTrading enabled via pywin32")
+                    return True
 
+            MT5Connector._ensure_terminal_window(mt5_path)
             MT5Connector._enable_autotrading_powershell()
-
             time.sleep(2)
             term = mt5.terminal_info()
             if term is not None and term.trade_allowed:
-                logger.info("AutoTrading enabled successfully")
-                return
+                logger.info("AutoTrading enabled via PowerShell")
+                return True
 
             if attempt < 2:
                 time.sleep(3 * (attempt + 1))
@@ -130,6 +132,7 @@ class MT5Connector:
             "Enable it manually: MT5 → Tools → Options → Expert Advisors "
             "→ check 'Allow Automated Trading'"
         )
+        return False
 
     @staticmethod
     def _check_autotrading_enabled() -> bool:
@@ -188,27 +191,52 @@ class MT5Connector:
             results.append(hwnd)
 
     @staticmethod
+    def _ensure_autotrading_via_config_with_restart(mt5_path: Optional[str] = None) -> bool:
+        """Set AutoTrading=1 in config, shutdown MT5, restart. Returns True once trading_allowed."""
+        modified = MT5Connector._enable_autotrading_via_config(mt5_path)
+        if modified:
+            logger.info("Config modified — restarting MT5 to apply...")
+            mt5.shutdown()
+            time.sleep(2)
+            init = mt5.initialize(path=mt5_path, timeout=30000)
+            if not init:
+                init = mt5.initialize()
+            if init:
+                from config.settings import get_settings
+                s = get_settings()
+                if s.mt5_login and s.mt5_password:
+                    mt5.login(
+                        login=s.mt5_login,
+                        password=s.mt5_password,
+                        server=s.mt5_server if s.mt5_server else None,
+                    )
+                time.sleep(1)
+                term = mt5.terminal_info()
+                if term is not None and term.trade_allowed:
+                    logger.info("AutoTrading enabled after config+restart")
+                    return True
+        return False
+
+    @staticmethod
     def _ensure_terminal_window(mt5_path: Optional[str] = None) -> None:
-        if not _HAS_PYWIN32:
-            return
-        try:
-            hwnds: List[int] = []
-            win32gui.EnumWindows(MT5Connector._enum_mt5_windows, hwnds)
-            if hwnds:
-                for hwnd in hwnds:
-                    placement = win32gui.GetWindowPlacement(hwnd)
-                    if placement[1] == win32con.SW_SHOWMINIMIZED:
-                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                    win32gui.SetForegroundWindow(hwnd)
-                return
-            logger.warning("No MetaTrader window found — launching MT5...")
-            if not mt5_path:
-                mt5_path = get_settings().mt5_path
-            if isinstance(mt5_path, str) and os.path.isfile(mt5_path):
-                subprocess.Popen([mt5_path])
-                time.sleep(5)
-        except Exception as e:
-            logger.warning(f"Could not ensure MT5 window: {e}")
+        if _HAS_PYWIN32:
+            try:
+                hwnds: List[int] = []
+                win32gui.EnumWindows(MT5Connector._enum_mt5_windows, hwnds)
+                if hwnds:
+                    for hwnd in hwnds:
+                        placement = win32gui.GetWindowPlacement(hwnd)
+                        if placement[1] == win32con.SW_SHOWMINIMIZED:
+                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                        win32gui.SetForegroundWindow(hwnd)
+                    return
+            except Exception:
+                pass
+        if not mt5_path:
+            mt5_path = get_settings().mt5_path
+        if isinstance(mt5_path, str) and os.path.isfile(mt5_path):
+            subprocess.Popen([mt5_path])
+            time.sleep(5)
 
     @staticmethod
     def _enable_autotrading_pywin32() -> None:
@@ -507,9 +535,11 @@ class MT5Connector:
                 continue
             if result.retcode == 10027:
                 logger.warning(f"Order rejected (10027 — AutoTrading disabled), re-enabling...")
-                MT5Connector._ensure_terminal_window(self.settings.mt5_path)
-                MT5Connector._ensure_auto_trading_enabled()
+                re_enabled = MT5Connector._ensure_auto_trading_enabled(self.settings.mt5_path)
                 time.sleep(1)
+                if not re_enabled:
+                    logger.error("Could not enable AutoTrading — aborting order")
+                    raise MT5ConnectorError("AutoTrading cannot be enabled")
                 continue
             logger.error(
                 f"Order rejected: retcode={result.retcode}, "
@@ -519,6 +549,15 @@ class MT5Connector:
                 f"Order rejected: retcode={result.retcode}, "
                 f"comment={result.comment}"
             )
+
+        # Validate result — reject ghost orders with zero price or ticket
+        if result.price == 0.0 or (result.order == 0 and result.deal == 0):
+            logger.error(
+                f"Order sent but got zero price/ticket: "
+                f"retcode={result.retcode} price={result.price} "
+                f"deal={result.deal} order={result.order}"
+            )
+            raise MT5ConnectorError("Order produced invalid result (zero price/ticket)")
 
         # Find actual position ticket from MT5 — retry since position may not appear immediately
         ticket = result.order if result.order != 0 else result.deal
@@ -594,14 +633,22 @@ class MT5Connector:
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
-        result = mt5.order_send(request)
-        if result is not None and result.retcode in (0, 10009):
-            logger.info(f"Position closed: {ticket} @ {price} deal={result.deal} retcode={result.retcode}")
-            return {
-                "order": result.order,
-                "deal": result.deal,
-                "price": result.price,
-            }
+        for close_attempt in range(2):
+            result = mt5.order_send(request)
+            if result is not None:
+                if result.retcode in (0, 10009):
+                    logger.info(f"Position closed: {ticket} @ {price} deal={result.deal} retcode={result.retcode}")
+                    return {
+                        "order": result.order,
+                        "deal": result.deal,
+                        "price": result.price,
+                    }
+                if result.retcode == 10027:
+                    logger.warning("Close rejected (AutoTrading disabled), re-enabling...")
+                    MT5Connector._ensure_auto_trading_enabled(self.settings.mt5_path)
+                    time.sleep(1)
+                    continue
+            break
 
         # IOC may not be supported for closes; retry without type_filling
         if result and result.retcode == 10013 and request.get("type_filling") is not None:
