@@ -4,6 +4,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import unittest
+import os
+import tempfile
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock, PropertyMock, call
 from typing import Dict, Any
@@ -341,6 +343,8 @@ class TestAutoTradingEnable(unittest.TestCase):
         mock_settings_instance.mt5_login = 12345
         mock_settings_instance.mt5_password = "pass"
         mock_settings_instance.mt5_server = "server"
+        mock_settings_instance.mt5_path = r"C:\Program Files\MetaTrader 5 - Copy\terminal64.exe"
+        mock_settings_instance.mt5_portable = True
         self.mock_settings.return_value = mock_settings_instance
 
         from connectors.mt5_connector import MT5Connector
@@ -396,6 +400,37 @@ class TestAutoTradingEnable(unittest.TestCase):
         conn_ok = self.conn.connect()
         self.assertTrue(conn_ok)
         self.mock_mt5.terminal_info.assert_not_called()
+
+    def test_connect_uses_portable_initialize(self):
+        self.conn._connected = False
+        self.conn.connect()
+        self.mock_mt5.initialize.assert_any_call(
+            path=r"C:\Program Files\MetaTrader 5 - Copy\terminal64.exe",
+            timeout=30000,
+            portable=True,
+        )
+
+    def test_portable_config_origin_is_modified(self):
+        from connectors.mt5_connector import MT5Connector
+
+        self.config_patcher.stop()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                terminal_path = os.path.join(tmp, "terminal64.exe")
+                config_dir = os.path.join(tmp, "config")
+                os.makedirs(config_dir)
+                with open(terminal_path, "w", encoding="utf-8") as f:
+                    f.write("")
+                origin = os.path.join(config_dir, "origin.cfg")
+                with open(origin, "w", encoding="utf-8") as f:
+                    f.write("AutoTrading=0\n")
+
+                self.assertTrue(MT5Connector._enable_autotrading_via_config(terminal_path))
+
+                with open(origin, encoding="utf-8") as f:
+                    self.assertIn("AutoTrading=1", f.read())
+        finally:
+            self.config_patcher.start()
 
     def test_powershell_command_structure(self):
         term = FakeMT5TerminalInfo()

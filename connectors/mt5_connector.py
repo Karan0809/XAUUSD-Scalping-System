@@ -38,9 +38,12 @@ class MT5Connector:
 
         MT5Connector._pre_enable_autotrading_config(self.settings.mt5_path)
         # Initialize terminal connection (any account)
-        init = mt5.initialize(path=self.settings.mt5_path, timeout=30000)
+        init = MT5Connector._initialize_mt5(
+            self.settings.mt5_path,
+            self.settings.mt5_portable,
+        )
         if not init:
-            init = mt5.initialize()
+            init = MT5Connector._initialize_mt5()
         if not init:
             error = mt5.last_error()
             logger.error(f"MT5 initialize failed: {error}")
@@ -65,9 +68,12 @@ class MT5Connector:
             logger.warning("AutoTrading still disabled — trying forced config modification...")
             mt5.shutdown()
             MT5Connector._enable_autotrading_via_config(self.settings.mt5_path)
-            init = mt5.initialize(path=self.settings.mt5_path, timeout=30000)
+            init = MT5Connector._initialize_mt5(
+                self.settings.mt5_path,
+                self.settings.mt5_portable,
+            )
             if not init:
-                init = mt5.initialize()
+                init = MT5Connector._initialize_mt5()
             if init and self.settings.mt5_login and self.settings.mt5_password:
                 mt5.login(
                     login=self.settings.mt5_login,
@@ -92,6 +98,30 @@ class MT5Connector:
                 f"Balance: {info.balance:.2f} {info.currency}"
             )
         return True
+
+    @staticmethod
+    def _as_bool(value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "yes", "on")
+        return False
+
+    @staticmethod
+    def _initialize_mt5(mt5_path: Optional[str] = None, portable: object = False) -> bool:
+        kwargs: Dict[str, Any] = {"timeout": 30000}
+        if MT5Connector._as_bool(portable):
+            kwargs["portable"] = True
+
+        try:
+            if mt5_path:
+                return bool(mt5.initialize(path=mt5_path, **kwargs))
+            return bool(mt5.initialize(**kwargs))
+        except TypeError:
+            kwargs.pop("portable", None)
+            if mt5_path:
+                return bool(mt5.initialize(path=mt5_path, **kwargs))
+            return bool(mt5.initialize(**kwargs))
 
     @staticmethod
     def _ensure_auto_trading_enabled(mt5_path: Optional[str] = None) -> bool:
@@ -145,43 +175,54 @@ class MT5Connector:
 
     @staticmethod
     def _enable_autotrading_via_config(mt5_path: Optional[str] = None) -> bool:
-        appdata = os.environ.get('APPDATA', '')
-        terminal_dir = os.path.join(appdata, 'MetaQuotes', 'Terminal') if appdata else ''
-        if not terminal_dir or not os.path.isdir(terminal_dir):
-            return False
-
         modified = False
         try:
-            for entry in os.listdir(terminal_dir):
-                entry_path = os.path.join(terminal_dir, entry)
-                if not os.path.isdir(entry_path):
+            for candidate, exact_terminal in MT5Connector._autotrading_config_candidates(mt5_path):
+                with open(candidate, 'r', encoding='utf-8-sig') as f:
+                    content = f.read()
+
+                if mt5_path and not exact_terminal and mt5_path not in content:
                     continue
 
-                for candidate in (
-                    os.path.join(entry_path, 'config', 'origin.cfg'),
-                    os.path.join(entry_path, 'origin.cfg'),
-                    os.path.join(entry_path, 'config', 'terminal.cfg'),
-                ):
-                    if not os.path.isfile(candidate):
-                        continue
-
-                    with open(candidate, 'r', encoding='utf-8-sig') as f:
-                        content = f.read()
-
-                    if mt5_path and mt5_path not in content:
-                        continue
-
-                    new_content = content.replace('AutoTrading=0', 'AutoTrading=1')
-                    if new_content != content:
-                        with open(candidate, 'w', encoding='utf-8') as f:
-                            f.write(new_content)
-                        logger.info(f"Set AutoTrading=1 in {candidate}")
-                        modified = True
-                        break
+                new_content = content.replace('AutoTrading=0', 'AutoTrading=1')
+                if new_content != content:
+                    with open(candidate, 'w', encoding='utf-8') as f:
+                        f.write(new_content)
+                    logger.info(f"Set AutoTrading=1 in {candidate}")
+                    modified = True
         except Exception as e:
             logger.warning(f"Config file modification failed: {e}")
 
         return modified
+
+    @staticmethod
+    def _autotrading_config_candidates(mt5_path: Optional[str] = None) -> List[Tuple[str, bool]]:
+        roots: List[Tuple[str, bool]] = []
+        seen = set()
+
+        if mt5_path:
+            install_dir = os.path.dirname(mt5_path)
+            if install_dir and os.path.isdir(install_dir):
+                roots.append((install_dir, True))
+
+        appdata = os.environ.get('APPDATA', '')
+        terminal_dir = os.path.join(appdata, 'MetaQuotes', 'Terminal') if appdata else ''
+        if terminal_dir and os.path.isdir(terminal_dir):
+            for entry in os.listdir(terminal_dir):
+                entry_path = os.path.join(terminal_dir, entry)
+                if os.path.isdir(entry_path):
+                    roots.append((entry_path, False))
+
+        for root, exact_terminal in roots:
+            for candidate in (
+                os.path.join(root, 'config', 'origin.cfg'),
+                os.path.join(root, 'origin.cfg'),
+                os.path.join(root, 'config', 'terminal.cfg'),
+            ):
+                if candidate in seen or not os.path.isfile(candidate):
+                    continue
+                seen.add(candidate)
+                yield candidate, exact_terminal
 
     @staticmethod
     def _enum_mt5_windows(hwnd: int, results: List[int]) -> None:
@@ -198,12 +239,12 @@ class MT5Connector:
             logger.info("Config modified — restarting MT5 to apply...")
             mt5.shutdown()
             time.sleep(2)
-            init = mt5.initialize(path=mt5_path, timeout=30000)
+            s = get_settings()
+            portable = s.mt5_portable
+            init = MT5Connector._initialize_mt5(mt5_path, portable)
             if not init:
-                init = mt5.initialize()
+                init = MT5Connector._initialize_mt5()
             if init:
-                from config.settings import get_settings
-                s = get_settings()
                 if s.mt5_login and s.mt5_password:
                     mt5.login(
                         login=s.mt5_login,
