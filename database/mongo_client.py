@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 class MongoClient:
-    def __init__(self):
-        self.settings = get_settings()
+    def __init__(self, settings: Optional[Any] = None, env_file: Optional[str] = None):
+        self.settings = settings if settings is not None else get_settings(env_file)
         self._client: Optional[PyMongoClient] = None
         self._db = None
         self._connected = False

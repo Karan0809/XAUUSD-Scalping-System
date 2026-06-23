@@ -41,7 +41,7 @@ class ScalperBot:
         self.env_file = env_file
         self.settings = get_settings(env_file)
         self.session_times = SessionTimes()
-        self.connector = MT5Connector()
+        self.connector = MT5Connector(settings=self.settings)
         self.zone_detector = InstitutionalZoneDetector()
         self.orb = OpeningRangeScalp(
             zone_detector=self.zone_detector,
@@ -54,8 +54,8 @@ class ScalperBot:
         self.news_filter = NewsFilter(
             blackout_minutes=self.settings.news_blackout_minutes
         ) if self.settings.news_filter_enabled else None
-        self.telegram = TelegramNotifier()
-        self.mongo = MongoClient()
+        self.telegram = TelegramNotifier(settings=self.settings)
+        self.mongo = MongoClient(settings=self.settings)
         self._running = False
         self._current_date: Optional[str] = None
         self._trades_today = 0

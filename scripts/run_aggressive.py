@@ -40,7 +40,7 @@ class AggressiveBot:
     def __init__(self, env_file: str = ".env"):
         self.env_file = env_file
         self.settings = get_settings(env_file)
-        self.connector = MT5Connector()
+        self.connector = MT5Connector(settings=self.settings)
         self.zone_detector = InstitutionalZoneDetector()
         self.risk_mgr = RiskManager(
             max_daily_loss_pct=self.settings.circuit_breaker_max_daily_loss_pct,
@@ -50,8 +50,8 @@ class AggressiveBot:
         self.news_filter = NewsFilter(
             blackout_minutes=self.settings.news_blackout_minutes
         ) if self.settings.news_filter_enabled else None
-        self.telegram = TelegramNotifier()
-        self.mongo = MongoClient()
+        self.telegram = TelegramNotifier(settings=self.settings)
+        self.mongo = MongoClient(settings=self.settings)
         self._running = False
         self._current_date: Optional[str] = None
         self._trades_today = 0

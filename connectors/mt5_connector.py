@@ -27,8 +27,8 @@ class MT5ConnectorError(Exception):
 
 
 class MT5Connector:
-    def __init__(self):
-        self.settings = get_settings()
+    def __init__(self, settings: Optional[Any] = None, env_file: Optional[str] = None):
+        self.settings = settings if settings is not None else get_settings(env_file)
         self._connected = False
         self._account_info: Optional[Dict[str, Any]] = None
 
@@ -64,7 +64,7 @@ class MT5Connector:
                 )
             logger.info(f"Logged into account {self.settings.mt5_login}")
 
-        if not MT5Connector._ensure_auto_trading_enabled(self.settings.mt5_path):
+        if not MT5Connector._ensure_auto_trading_enabled(self.settings.mt5_path, self.settings):
             logger.warning("AutoTrading still disabled — trying forced config modification...")
             mt5.shutdown()
             MT5Connector._enable_autotrading_via_config(self.settings.mt5_path)
@@ -80,7 +80,7 @@ class MT5Connector:
                     password=self.settings.mt5_password,
                     server=self.settings.mt5_server if self.settings.mt5_server else None,
                 )
-            MT5Connector._ensure_auto_trading_enabled(self.settings.mt5_path)
+            MT5Connector._ensure_auto_trading_enabled(self.settings.mt5_path, self.settings)
 
         self._connected = True
         info = mt5.account_info()
@@ -124,7 +124,7 @@ class MT5Connector:
             return bool(mt5.initialize(**kwargs))
 
     @staticmethod
-    def _ensure_auto_trading_enabled(mt5_path: Optional[str] = None) -> bool:
+    def _ensure_auto_trading_enabled(mt5_path: Optional[str] = None, settings: Optional[Any] = None) -> bool:
         term = mt5.terminal_info()
         if term is not None and term.trade_allowed:
             return True
@@ -133,20 +133,20 @@ class MT5Connector:
             logger.warning(f"AutoTrading disabled (attempt {attempt + 1}/3), enabling...")
 
             # Try config modification + restart first (works on headless servers)
-            if MT5Connector._ensure_autotrading_via_config_with_restart(mt5_path):
+            if MT5Connector._ensure_autotrading_via_config_with_restart(mt5_path, settings):
                 return True
 
             # Fallback: window-based methods (requires GUI)
             if _HAS_PYWIN32:
-                MT5Connector._ensure_terminal_window(mt5_path)
-                MT5Connector._enable_autotrading_pywin32()
+                MT5Connector._ensure_terminal_window(mt5_path, settings)
+                MT5Connector._enable_autotrading_pywin32(mt5_path, settings)
                 time.sleep(2)
                 term = mt5.terminal_info()
                 if term is not None and term.trade_allowed:
                     logger.info("AutoTrading enabled via pywin32")
                     return True
 
-            MT5Connector._ensure_terminal_window(mt5_path)
+            MT5Connector._ensure_terminal_window(mt5_path, settings)
             MT5Connector._enable_autotrading_powershell()
             time.sleep(2)
             term = mt5.terminal_info()
@@ -232,14 +232,17 @@ class MT5Connector:
             results.append(hwnd)
 
     @staticmethod
-    def _ensure_autotrading_via_config_with_restart(mt5_path: Optional[str] = None) -> bool:
+    def _ensure_autotrading_via_config_with_restart(
+        mt5_path: Optional[str] = None,
+        settings: Optional[Any] = None,
+    ) -> bool:
         """Set AutoTrading=1 in config, shutdown MT5, restart. Returns True once trading_allowed."""
         modified = MT5Connector._enable_autotrading_via_config(mt5_path)
         if modified:
             logger.info("Config modified — restarting MT5 to apply...")
             mt5.shutdown()
             time.sleep(2)
-            s = get_settings()
+            s = settings if settings is not None else get_settings()
             portable = s.mt5_portable
             init = MT5Connector._initialize_mt5(mt5_path, portable)
             if not init:
@@ -259,7 +262,7 @@ class MT5Connector:
         return False
 
     @staticmethod
-    def _ensure_terminal_window(mt5_path: Optional[str] = None) -> None:
+    def _ensure_terminal_window(mt5_path: Optional[str] = None, settings: Optional[Any] = None) -> None:
         if _HAS_PYWIN32:
             try:
                 hwnds: List[int] = []
@@ -274,18 +277,22 @@ class MT5Connector:
             except Exception:
                 pass
         if not mt5_path:
-            mt5_path = get_settings().mt5_path
+            s = settings if settings is not None else get_settings()
+            mt5_path = s.mt5_path
         if isinstance(mt5_path, str) and os.path.isfile(mt5_path):
             subprocess.Popen([mt5_path])
             time.sleep(5)
 
     @staticmethod
-    def _enable_autotrading_pywin32() -> None:
+    def _enable_autotrading_pywin32(
+        mt5_path: Optional[str] = None,
+        settings: Optional[Any] = None,
+    ) -> None:
         try:
             hwnds: List[int] = []
             win32gui.EnumWindows(MT5Connector._enum_mt5_windows, hwnds)
             if not hwnds:
-                MT5Connector._ensure_terminal_window()
+                MT5Connector._ensure_terminal_window(mt5_path, settings)
                 win32gui.EnumWindows(MT5Connector._enum_mt5_windows, hwnds)
             if not hwnds:
                 logger.warning("No MetaTrader window found after launch")
@@ -576,7 +583,10 @@ class MT5Connector:
                 continue
             if result.retcode == 10027:
                 logger.warning(f"Order rejected (10027 — AutoTrading disabled), re-enabling...")
-                re_enabled = MT5Connector._ensure_auto_trading_enabled(self.settings.mt5_path)
+                re_enabled = MT5Connector._ensure_auto_trading_enabled(
+                    self.settings.mt5_path,
+                    self.settings,
+                )
                 time.sleep(1)
                 if not re_enabled:
                     logger.error("Could not enable AutoTrading — aborting order")
@@ -686,7 +696,10 @@ class MT5Connector:
                     }
                 if result.retcode == 10027:
                     logger.warning("Close rejected (AutoTrading disabled), re-enabling...")
-                    MT5Connector._ensure_auto_trading_enabled(self.settings.mt5_path)
+                    MT5Connector._ensure_auto_trading_enabled(
+                        self.settings.mt5_path,
+                        self.settings,
+                    )
                     time.sleep(1)
                     continue
             break

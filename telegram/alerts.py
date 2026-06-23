@@ -22,8 +22,8 @@ def fmt_et(dt: Optional[datetime] = None, fmt: str = "%I:%M %p") -> str:
 
 
 class TelegramNotifier:
-    def __init__(self):
-        self.settings = get_settings()
+    def __init__(self, settings: Optional[Any] = None, env_file: Optional[str] = None):
+        self.settings = settings if settings is not None else get_settings(env_file)
         raw = (self.settings.telegram_chat_id or "").strip()
         self._chat_ids = [c.strip() for c in raw.split(",") if c.strip()]
         self._enabled = bool(self.settings.telegram_token and self._chat_ids)
