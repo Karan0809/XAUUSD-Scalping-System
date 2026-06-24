@@ -26,7 +26,7 @@ from telegram.alerts import TelegramNotifier, fmt_et
 logger = logging.getLogger(__name__)
 trade_logger = get_logger("trade")
 
-SL_PIPS = 50
+SL_PIPS = 80
 SL_PRICE = SL_PIPS / 100.0
 RISK_PCT = 1.2
 MAX_TRADES_PER_DAY = 20

@@ -798,31 +798,6 @@ class MT5Connector:
             )
             if attempt < 2:
                 time.sleep(2)
-        # Fallback: match by symbol + entry price when ticket-based lookup fails
-        if symbol and entry_price is not None:
-            logger.warning(f"Trying price-based fallback for ticket {ticket} (symbol={symbol}, entry={entry_price:.2f})")
-            deals = mt5.history_deals_get(datetime.now() - timedelta(days=2), datetime.now())
-            if deals:
-                exit_deals = [d for d in deals if d.entry == 1 and d.symbol == symbol]
-                close_by_price = None
-                best_diff = 999.0
-                for d in exit_deals:
-                    diff = abs(d.price - entry_price)
-                    if diff < best_diff and diff < 5.0:
-                        best_diff = diff
-                        close_by_price = d
-                if close_by_price:
-                    logger.info(f"Price-based fallback found deal {close_by_price.ticket} for ticket {ticket}")
-                    close_deals = [d for d in exit_deals if d.position_id == close_by_price.position_id]
-                    if close_deals:
-                        total_profit = sum(d.profit for d in close_deals)
-                        last = close_deals[-1]
-                        return {
-                            "price": last.price,
-                            "profit": total_profit,
-                            "volume": sum(d.volume for d in close_deals),
-                            "time": datetime.fromtimestamp(last.time, tz=timezone.utc),
-                        }
         return None
 
     def get_open_positions_count(self, symbol: str = "XAUUSD") -> int:
