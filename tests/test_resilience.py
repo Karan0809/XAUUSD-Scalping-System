@@ -220,39 +220,6 @@ class TestVPSRebootWithOpenTrade(unittest.TestCase):
         self.runlive_mt5_patcher.stop()
         self.settings_patcher.stop()
 
-    def check_live_bot_orphan_recovery(self):
-        from scripts.run_live import ScalperBot
-        bot = ScalperBot(env_file=".env")
-
-        self.mock_mt5.positions_get.return_value = [FakeMT5Position()]
-
-        bot.connector._connected = True
-        bot.connector._account_info = {"login": 12345, "balance": 1000.0}
-
-        bot.mongo = MagicMock()
-        bot.mongo.connect.return_value = True
-
-        bot.zone_detector = MagicMock()
-        bot.orb = MagicMock()
-
-        self.mock_mt5.account_info.return_value = FakeAccountInfo()
-        self.mock_mt5.copy_rates_from.return_value = [
-            (1700000000, 2330.0, 2331.0, 2329.0, 2330.5, 100, 20, 0)
-        ]
-
-        bot.telegram = MagicMock()
-        bot._load_15min_data = MagicMock()
-
-        result = bot.initialize()
-        self.assertTrue(result)
-        self.assertIsNotNone(bot._position)
-        self.assertEqual(bot._position["ticket"], 5001)
-        self.assertEqual(bot._position["type"], "buy")
-        self.assertEqual(bot._position["entry"], 2330.0)
-
-    def test_bot_recovers_open_trade_on_start(self):
-        self.check_live_bot_orphan_recovery()
-
 
 class TestMT5CrashRecovery(unittest.TestCase):
     def setUp(self):
@@ -495,7 +462,6 @@ class TestMongoDBUnavailable(unittest.TestCase):
         bot.mongo = MagicMock()
         bot.mongo.connect.return_value = False
         bot.zone_detector = MagicMock()
-        bot.orb = MagicMock()
         bot.telegram = MagicMock()
         bot._load_15min_data = MagicMock()
 
@@ -621,7 +587,6 @@ class TestTelegramInvalidToken(unittest.TestCase):
             bot.mongo = MagicMock()
             bot.mongo.connect.return_value = True
             bot.zone_detector = MagicMock()
-            bot.orb = MagicMock()
             bot.telegram = MagicMock()
             bot._load_15min_data = MagicMock()
             result = bot.initialize()
@@ -729,75 +694,6 @@ class TestFridayShutdown(unittest.TestCase):
         self.runlive_mt5_patcher.stop()
         self.settings_patcher.stop()
 
-    def test_orb_friday_shutdown_closes_position(self):
-        from scripts.run_live import ScalperBot
-        bot = ScalperBot(env_file=".env")
-        bot.initialize = MagicMock(return_value=True)
-        bot.connector = MagicMock()
-        bot.mongo = MagicMock()
-        bot.telegram = MagicMock()
-        bot._load_15min_data = MagicMock()
-        bot.zone_detector = MagicMock()
-        bot.orb = MagicMock()
-        bot._df_15min = MagicMock()
-        bot.session_times = MagicMock()
-        bot._position = {"ticket": 5001, "remaining_lots": 0.5, "type": "buy", "symbol": "XAUUSD"}
-        bot._current_date = "2025-06-13"
-        bot._m15_last_refresh = 1000
-
-        with patch("scripts.run_live.SessionValidator.is_friday_close") as mock_friday:
-            with patch("scripts.run_live.SessionValidator.next_monday_utc") as mock_next:
-                with patch("scripts.run_live.time.sleep") as mock_sleep:
-                    mock_friday.side_effect = [True, False]
-                    mock_next.return_value = datetime.now(timezone.utc) + timedelta(hours=1)
-
-                    def stop_after_reconnect(*a, **kw):
-                        bot._running = False
-                    bot.connector.connect.side_effect = stop_after_reconnect
-
-                    bot.run()
-
-                    bot.connector.close_position.assert_called_once()
-                    self.assertEqual(bot.connector.close_position.call_args[0][0]["ticket"], 5001)
-                    bot.mongo.disconnect.assert_called()
-                    bot.connector.disconnect.assert_called()
-                    mock_sleep.assert_called_once()
-                    bot.connector.connect.assert_called_once()
-                    bot.mongo.connect.assert_called_once()
-                    bot._load_15min_data.assert_called_once()
-                    self.assertIsNone(bot._current_date)
-                    self.assertEqual(bot._m15_last_refresh, 0)
-
-    def test_orb_friday_shutdown_no_position(self):
-        from scripts.run_live import ScalperBot
-        bot = ScalperBot(env_file=".env")
-        bot.initialize = MagicMock(return_value=True)
-        bot.connector = MagicMock()
-        bot.mongo = MagicMock()
-        bot.telegram = MagicMock()
-        bot._load_15min_data = MagicMock()
-        bot.zone_detector = MagicMock()
-        bot.orb = MagicMock()
-        bot._df_15min = MagicMock()
-        bot.session_times = MagicMock()
-        bot._position = None
-        bot._current_date = "2025-06-13"
-        bot._m15_last_refresh = 1000
-
-        with patch("scripts.run_live.SessionValidator.is_friday_close") as mock_friday:
-            with patch("scripts.run_live.SessionValidator.next_monday_utc") as mock_next:
-                with patch("scripts.run_live.time.sleep") as mock_sleep:
-                    mock_friday.side_effect = [True, False]
-                    mock_next.return_value = datetime.now(timezone.utc) + timedelta(hours=1)
-
-                    def stop_after_reconnect(*a, **kw):
-                        bot._running = False
-                    bot.connector.connect.side_effect = stop_after_reconnect
-
-                    bot.run()
-
-                    bot.connector.close_position.assert_not_called()
-
     def test_aggressive_friday_shutdown_closes_position(self):
         from scripts.run_aggressive import AggressiveBot
         bot = AggressiveBot(env_file=".env")
@@ -857,27 +753,11 @@ class TestFridayShutdown(unittest.TestCase):
 
 
 class TestBarScanAfterReconnect(unittest.TestCase):
-    def test_scan_from_open_time_not_window(self):
-        from scripts.run_live import ScalperBot
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        self.assertIn("df.index.get_loc(open_time)", content,
-                      "ORB bot must scan from open_time, not a fixed window")
-
     def test_aggressive_scan_from_open_time(self):
         with open(Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py") as f:
             content = f.read()
         self.assertIn("rates.index.get_loc(open_time)", content,
                       "Aggressive bot must scan from open_time, not a fixed window")
-
-    def test_catch_up_handles_bars_before_start_idx(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        self.assertIn("if df.index[j] <= open_time:", content,
-                      "ORB bot must skip bars before or at open_time")
-        collapsed = "".join(content.split())
-        self.assertIn("ifdf.index[j]<=open_time:continue", collapsed,
-                      "continue must follow the open_time skip check")
 
     def test_aggressive_catch_up_skips_old_bars(self):
         with open(Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py") as f:

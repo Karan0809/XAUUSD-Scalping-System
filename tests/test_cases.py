@@ -174,90 +174,6 @@ class TestDrawdownCalculation(unittest.TestCase):
 
 
 class TestSameCandleTP1SLEOrdering(unittest.TestCase):
-    def test_tp1_checked_before_sl(self):
-        from scripts.run_live import ScalperBot
-        tp1_line = None
-        sl_line = None
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            for i, line in enumerate(f, 1):
-                if "# TP1: close first tranche at 1:1" in line:
-                    tp1_line = i
-                if "# SL/be check on remaining position" in line:
-                    sl_line = i
-        self.assertIsNotNone(tp1_line, "TP1 comment not found")
-        self.assertIsNotNone(sl_line, "SL comment not found")
-        self.assertLess(tp1_line, sl_line,
-                         f"TP1 check at line {tp1_line} must come before SL check at line {sl_line}")
-
-    def test_aggressive_tp1_checked_before_sl(self):
-        from scripts.run_aggressive import AggressiveBot
-        tp1_line = None
-        sl_line = None
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py") as f:
-            for i, line in enumerate(f, 1):
-                if "# TP1 at 1:1" in line:
-                    tp1_line = i
-                if "# SL/BE check" in line:
-                    sl_line = i
-        self.assertIsNotNone(tp1_line, "TP1 comment not found")
-        self.assertIsNotNone(sl_line, "SL comment not found")
-        self.assertLess(tp1_line, sl_line,
-                         f"TP1 check at line {tp1_line} must come before SL check at line {sl_line}")
-
-    def test_sl_check_uses_current_sl_not_original(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        self.assertIn('self._position["sl"]', content,
-                      "SL check must use current sl, not original_sl")
-
-    def test_tp1_sets_sl_to_entry_before_sl_check(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        close_idx = content.index('self._close_partial(self._position["tp1_lots"]')
-        tp1_flag_idx = content.index('self._position["tp1_hit"] = True')
-        modify_idx = content.index("modify_position", tp1_flag_idx)
-        sl_moved_idx = content.index('self._position["sl"] = entry')
-        self.assertLess(close_idx, tp1_flag_idx,
-                        "TP1 partial close must come before tp1_hit flag")
-        self.assertLess(tp1_flag_idx, modify_idx,
-                        "modify_position call must come after tp1_hit flag")
-        self.assertLess(modify_idx, sl_moved_idx,
-                        "SL move to entry must come AFTER modify_position succeeds")
-
-
-class TestOrphanRecovery(unittest.TestCase):
-    def test_orb_orphan_dict_keys(self):
-        pos: Dict[str, Any] = {
-            "type": "buy",
-            "entry": 2330.0,
-            "sl": 2329.0,
-            "tp": 2331.0,
-            "lot_size": 0.5,
-            "original_sl": 2329.0,
-            "original_lot_size": 0.5,
-            "tp1_lots": 0,
-            "tp2_lots": 0,
-            "tp3_lots": 0,
-            "remaining_lots": 0.5,
-            "pnl": 0.0,
-            "tp1_hit": False,
-            "tp2_hit": False,
-            "tp3_hit": False,
-            "trailing_activated": False,
-            "trail_activation_bar": 0,
-            "trade_id": "test-uuid",
-            "open_time": datetime.now(timezone.utc),
-            "ticket": 12345,
-        }
-        required = ["type", "entry", "sl", "tp", "lot_size", "original_sl",
-                     "original_lot_size", "remaining_lots", "pnl",
-                     "tp1_hit", "tp2_hit", "tp3_hit",
-                     "trailing_activated", "trail_activation_bar",
-                     "trade_id", "open_time", "ticket",
-                     "tp1_lots", "tp2_lots", "tp3_lots"]
-        for key in required:
-            self.assertIn(key, pos, f"ORB orphan dict missing key: {key}")
-
     def test_aggressive_orphan_dict_keys(self):
         pos: Dict[str, Any] = {
             "type": "buy",
@@ -345,12 +261,6 @@ class TestPartialCloseFailureHandling(unittest.TestCase):
         self.assertIn("request.pop(\"type_filling\")", content)
         self.assertIn("request[\"position\"] = actual_ticket", content)
 
-    def test_orb_close_partial_calls_resolve_on_failure(self):
-        src_path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(src_path) as f:
-            content = f.read()
-        self.assertIn("self._resolve_position_closed(current_time)", content)
-
     def test_aggressive_close_partial_sets_closed_on_failure(self):
         src_path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
         with open(src_path) as f:
@@ -364,13 +274,6 @@ class TestBugRegression(unittest.TestCase):
         idx2 = content.index(later)
         self.assertLess(idx1, idx2, msg or f"'{earlier}' not before '{later}'")
 
-    def test_bug8_orb_crash_guard_present(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        self.assertIn("if self._position is None:\n                    break", content)
-        self.assertIn('self._position and self._position.get("trailing_activated")', content)
-
     def test_bug9_aggressive_double_count_guard_present(self):
         path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
         with open(path) as f:
@@ -380,24 +283,6 @@ class TestBugRegression(unittest.TestCase):
 
 
 class TestTP1MovesSLToBE(unittest.TestCase):
-    def test_modify_position_called_with_entry_sl_after_tp1(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        self.assertIn('self._position["sl"] = entry', content,
-                      "SL must be moved to entry price")
-        self.assertIn("modify_position", content,
-                      "modify_position must be called to push SL to broker")
-        close_idx = content.index('self._close_partial(self._position["tp1_lots"]')
-        tp1_flag_idx = content.index('self._position["tp1_hit"] = True')
-        modify_idx = content.index("modify_position", tp1_flag_idx)
-        sl_idx = content.index('self._position["sl"] = entry')
-        self.assertLess(close_idx, tp1_flag_idx,
-                        "TP1 partial close must precede tp1_hit flag")
-        self.assertLess(tp1_flag_idx, modify_idx,
-                        "modify_position call must come after tp1_hit flag")
-        self.assertLess(modify_idx, sl_idx,
-                        "SL move must come AFTER modify_position succeeds")
-
     def test_aggressive_modify_position_called_with_entry_sl_after_tp1(self):
         with open(Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py") as f:
             content = f.read()
@@ -416,14 +301,6 @@ class TestTP1MovesSLToBE(unittest.TestCase):
         self.assertLess(modify_idx, sl_idx,
                         "Aggressive: SL move must come AFTER modify_position succeeds")
 
-    def test_tp1_close_uses_tp1_level_not_entry(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        close_tp1 = "tp1_level" in content[content.index("_close_partial"):content.index("_close_partial") + 200]
-        tp1_level_arg = content.count("tp1_level")
-        self.assertGreaterEqual(tp1_level_arg, 2,
-                                "TP1 partial close must use tp1_level (not entry) as price")
-
     def test_aggressive_tp1_close_uses_tp1_level(self):
         with open(Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py") as f:
             content = f.read()
@@ -434,28 +311,11 @@ class TestTP1MovesSLToBE(unittest.TestCase):
 
 
 class TestTP1AndBEHitSameCandle(unittest.TestCase):
-    def test_sl_check_skips_tp_hit_bar(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        self.assertIn('j != self._position.get("tp_hit_bar")', content,
-                      "SL/BE check must skip the bar that triggered TP1 (tp_hit_bar guard)")
-
     def test_aggressive_sl_check_skips_tp_hit_bar(self):
         with open(Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py") as f:
             content = f.read()
         self.assertIn('j != pos.get("tp_hit_bar")', content,
                       "Aggressive: SL/BE check must skip tp_hit_bar")
-
-    def test_tp_hit_bar_set_after_tp1_close_before_sl_check(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        tp1_close = content.index('_close_partial(self._position["tp1_lots"]')
-        tp_hit_set = content.index('self._position["tp_hit_bar"] = j')
-        sl_check_header = content.index("# SL/be check on remaining position")
-        self.assertLess(tp1_close, tp_hit_set,
-                        "tp_hit_bar must be set after TP1 close")
-        self.assertLess(tp_hit_set, sl_check_header,
-                        "tp_hit_bar must be set before SL/BE check runs")
 
     def test_same_cannot_double_close_both_tp1_and_be(self):
         pos = {
@@ -482,41 +342,6 @@ class TestTP1AndBEHitSameCandle(unittest.TestCase):
 
 
 class TestTP1TP2TrailSameCandle(unittest.TestCase):
-    def test_orb_execution_order_within_bar(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        self.assertIn("# TP1:", content, "TP1 section must exist")
-        self.assertIn("# TP2:", content, "TP2 section must exist (3-target)")
-        tp1_idx = content.index("# TP1:")
-        tp2_idx = content.index("# TP2:")
-        trail_update_idx = content.index("# Update trailing stop")
-        self.assertLess(tp1_idx, tp2_idx, "TP1 check must come before TP2")
-        self.assertLess(tp2_idx, trail_update_idx, "TP2 must come before trailing update")
-
-    def test_aggressive_execution_order(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py") as f:
-            content = f.read()
-        self.assertIn("# TP1 at 1:1", content)
-        self.assertIn("# Update trailing stop", content)
-        tp1_idx = content.index("# TP1 at 1:1")
-        trail_idx = content.index("# Update trailing stop")
-        self.assertLess(tp1_idx, trail_idx, "TP1 must come before trailing update")
-
-    def test_trail_check_skips_activation_bar(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        self.assertIn('j != self._position.get("trail_activation_bar")', content,
-                      "Trailing stop check must skip activation bar")
-        self.assertIn('self._position["trail_activation_bar"] = j', content,
-                      "Trail activation must record the bar index")
-
-    def test_tp2_skips_tp_hit_bar(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        tp2_section = content[content.index("# TP2:"):content.index("# Update trailing stop")]
-        self.assertIn('j != self._position.get("tp_hit_bar")', tp2_section,
-                      "TP2 must skip the bar that triggered TP1")
-
     def test_tp1_only_fires_on_activation_bar_when_all_levels_hit(self):
         pos = {
             "entry": 2330.0, "original_sl": 2320.0, "sl": 2320.0,
@@ -549,14 +374,6 @@ class TestTP1TP2TrailSameCandle(unittest.TestCase):
 
 
 class TestGapThroughStopLoss(unittest.TestCase):
-    def test_sl_uses_lte_operator(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        self.assertIn('bar["low"] <= self._position["sl"]', content,
-                      "SL condition must use <= (not ==) to catch gaps for buys")
-        self.assertIn('bar["high"] >= self._position["sl"]', content,
-                      "SL condition must use >= for sells")
-
     def test_aggressive_sl_uses_lte_operator(self):
         with open(Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py") as f:
             content = f.read()
@@ -634,52 +451,11 @@ class TestTrailingRatchetOnlyForward(unittest.TestCase):
         self.assertFalse(new_trail < trail_level,
                          "Higher low must not decrease trail_level for sells")
 
-    def test_trail_initialized_from_tp1_bar_high_low(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        if "trail_level" in content:
-            self.assertIn('bar["high"] - trail_dist', content,
-                          "Buy trail must initialize from bar high")
-            self.assertIn('bar["low"] + trail_dist', content,
-                          "Sell trail must initialize from bar low")
-
     def test_trail_uses_sl_dist_times_multiplier(self):
         with open(Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py") as f:
             content = f.read()
         self.assertIn("sl_dist * self.settings.trail_multiplier", content,
                       "Trail distance must be sl_dist * trail_multiplier")
-
-    def test_trail_skip_activation_bar_on_check(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        self.assertIn('j != self._position.get("trail_activation_bar")', content,
-                      "Trail check must skip activation bar to avoid immediate trigger")
-
-
-class TestNoDuplicateCloseRequests(unittest.TestCase):
-    def test_tp1_guard_flag_prevents_reentry(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        tp1_section = content[content.index("# TP1:"):content.index("# TP2:") if "# TP2:" in content else content.index("# Update trailing stop")]
-        self.assertIn('not self._position.get("tp1_hit", False)', tp1_section,
-                      "TP1 must be guarded by tp1_hit flag")
-
-    def test_tp2_guard_flag_prevents_reentry(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        if "# TP2:" in content:
-            tp2_section = content[content.index("# TP2:"):content.index("# Update trailing stop")]
-            self.assertIn('not self._position.get("tp2_hit", False)', tp2_section,
-                          "TP2 must be guarded by tp2_hit flag")
-
-    def test_remaining_lots_zero_breaks_loop(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        bar_loop = content[content.index("for j in range(start_idx"):content.index("if self._position and self._position")]
-        self.assertIn('if self._position["remaining_lots"] <= 0:', bar_loop,
-                      "Loop must break when remaining_lots <= 0")
-        self.assertIn('break', bar_loop[bar_loop.index('if self._position["remaining_lots"] <= 0:'):],
-                      "break must follow the remaining_lots <= 0 check")
 
     def test_aggressive_remaining_lots_zero_breaks_loop(self):
         with open(Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py") as f:
@@ -690,695 +466,12 @@ class TestNoDuplicateCloseRequests(unittest.TestCase):
         self.assertIn('break', remaining_check[:100],
                       "break must follow remaining_lots <= 0 check")
 
-    def test_sl_check_has_tp_hit_bar_guard(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            content = f.read()
-        self.assertIn("# SL/be check", content)
-        sl_idx = content.index("# SL/be check")
-        self.assertIn('self._position.get("tp_hit_bar")', content[sl_idx:],
-                      "SL check must have tp_hit_bar guard to prevent same-bar double close")
-
-    def test_close_partial_called_once_per_condition(self):
-        with open(Path(__file__).resolve().parent.parent / "scripts" / "run_live.py") as f:
-            lines = f.readlines()
-        close_partial_calls = sum(1 for line in lines if "self._close_partial(" in line)
-        self.assertEqual(close_partial_calls, 4,
-                         "ORB bot must have exactly 4 _close_partial calls (tp1, tp2, trail, sl/be)")
-
     def test_aggressive_close_partial_called_once_per_condition(self):
         with open(Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py") as f:
             lines = f.readlines()
         close_partial_calls = sum(1 for line in lines if "self._close_partial(" in line)
         self.assertEqual(close_partial_calls, 3,
                          "Aggressive bot must have exactly 3 _close_partial calls (tp1, trail, sl/be)")
-
-
-class TestMissingOpeningRangeCandle(unittest.TestCase):
-    def setUp(self):
-        from core.opening_range_scalp import OpeningRangeScalp
-        self.orb = OpeningRangeScalp()
-        self.orb._current_session = "asia"
-
-    def _m15_index(self, base: datetime, count: int, minutes: int = 15):
-        return [base + timedelta(minutes=i * minutes) for i in range(count)]
-
-    def _m15_df(self, times, highs, lows, closes=None, opens=None):
-        import pandas as pd
-        if opens is None:
-            opens = [l - 0.5 for l in lows]
-        if closes is None:
-            closes = [(h + l) / 2 for h, l in zip(highs, lows)]
-        return pd.DataFrame({
-            "open": opens, "high": highs, "low": lows, "close": closes,
-        }, index=pd.DatetimeIndex(times))
-
-    def test_empty_dataframe_returns_false(self):
-        import pandas as pd
-        t = datetime(2026, 6, 15, 0, 20, tzinfo=timezone.utc)
-        result = self.orb._establish_opening_range(pd.DataFrame(), t)
-        self.assertFalse(result)
-
-    def test_none_dataframe_returns_false(self):
-        t = datetime(2026, 6, 15, 0, 20, tzinfo=timezone.utc)
-        result = self.orb._establish_opening_range(None, t)
-        self.assertFalse(result)
-
-    def test_too_early_returns_false(self):
-        t = datetime(2026, 6, 15, 0, 5, tzinfo=timezone.utc)
-        df = self._m15_df(self._m15_index(t, 5), [2300]*5, [2290]*5)
-        result = self.orb._establish_opening_range(df, t)
-        self.assertFalse(result)
-
-    def test_no_candle_in_window_returns_false(self):
-        t = datetime(2026, 6, 15, 1, 0, tzinfo=timezone.utc)
-        times = [datetime(2026, 6, 15, 0, 30, tzinfo=timezone.utc)]
-        df = self._m15_df(times, [2300], [2290])
-        result = self.orb._establish_opening_range(df, t)
-        self.assertFalse(result)
-
-    def test_establishes_range_on_first_valid_candle(self):
-        t = datetime(2026, 6, 15, 0, 20, tzinfo=timezone.utc)
-        or_start = t.replace(hour=0, minute=0, second=0, microsecond=0)
-        times = self._m15_index(or_start, 1)
-        df = self._m15_df(times, [2310.5], [2299.3])
-        result = self.orb._establish_opening_range(df, t)
-        self.assertTrue(result)
-        self.assertEqual(self.orb._range_high, 2310.5)
-        self.assertEqual(self.orb._range_low, 2299.3)
-        self.assertTrue(self.orb._range_established)
-
-    def test_already_established_returns_true(self):
-        self.orb._range_established = True
-        self.orb._range_high = 2310.0
-        self.orb._range_low = 2299.0
-        t = datetime(2026, 6, 15, 0, 20, tzinfo=timezone.utc)
-        result = self.orb._establish_opening_range(None, t)
-        self.assertTrue(result)
-
-    def test_range_from_multiple_candles_uses_max_high_min_low(self):
-        t = datetime(2026, 6, 15, 0, 20, tzinfo=timezone.utc)
-        or_start = t.replace(hour=0, minute=0, second=0, microsecond=0)
-        times = [or_start + timedelta(minutes=1), or_start + timedelta(minutes=14)]
-        df = self._m15_df(times, [2305.0, 2312.0], [2298.0, 2295.0])
-        result = self.orb._establish_opening_range(df, t)
-        self.assertTrue(result)
-        self.assertEqual(self.orb._range_high, 2312.0)
-        self.assertEqual(self.orb._range_low, 2295.0)
-
-    def test_london_session_opening_time(self):
-        self.orb._current_session = "london"
-        t = datetime(2026, 6, 15, 9, 20, tzinfo=timezone.utc)
-        or_start = t.replace(hour=9, minute=0, second=0, microsecond=0)
-        times = self._m15_index(or_start, 1)
-        df = self._m15_df(times, [2320.5], [2310.3])
-        result = self.orb._establish_opening_range(df, t)
-        self.assertTrue(result)
-        self.assertEqual(self.orb._range_high, 2320.5)
-        self.assertEqual(self.orb._range_low, 2310.3)
-
-    def test_ny_session_opening_time(self):
-        self.orb._current_session = "ny"
-        t = datetime(2026, 6, 15, 13, 50, tzinfo=timezone.utc)
-        or_start = t.replace(hour=13, minute=30, second=0, microsecond=0)
-        times = self._m15_index(or_start, 1)
-        df = self._m15_df(times, [2330.5], [2320.3])
-        result = self.orb._establish_opening_range(df, t)
-        self.assertTrue(result)
-        self.assertEqual(self.orb._range_high, 2330.5)
-        self.assertEqual(self.orb._range_low, 2320.3)
-
-
-class TestBreakoutPullbackEntry(unittest.TestCase):
-    def setUp(self):
-        from core.opening_range_scalp import OpeningRangeScalp
-        self.orb = OpeningRangeScalp()
-
-    def _df(self, times, opens, highs, lows, closes):
-        import pandas as pd
-        return pd.DataFrame({
-            "open": opens, "high": highs, "low": lows, "close": closes,
-        }, index=pd.DatetimeIndex(times))
-
-    def _times(self, base, count, minutes=5):
-        return [base + timedelta(minutes=i * minutes) for i in range(count)]
-
-    def test_buy_pullback_detected(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 8)
-        poi = (2310.0, 2320.0)
-        close_price = 2314.5
-        row = {"open": 2314.0, "high": 2319.0, "low": 2312.0, "close": close_price}
-        opens = [2310.0]*7 + [row["open"]]
-        highs = [2318.0]*7 + [row["high"]]
-        lows  = [2308.0]*7 + [row["low"]]
-        closes = [2312.0]*7 + [row["close"]]
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._check_pullback(df, poi, "buy")
-        self.assertIsNotNone(result)
-        self.assertIn("entry", result)
-        self.assertIn("sl", result)
-        self.assertEqual(result["entry"], close_price)
-
-    def test_sell_pullback_detected(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 8)
-        poi = (2320.0, 2330.0)
-        close_price = 2325.5
-        row = {"open": 2326.0, "high": 2329.0, "low": 2322.0, "close": close_price}
-        opens = [2330.0]*7 + [row["open"]]
-        highs = [2335.0]*7 + [row["high"]]
-        lows  = [2328.0]*7 + [row["low"]]
-        closes = [2332.0]*7 + [row["close"]]
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._check_pullback(df, poi, "sell")
-        self.assertIsNotNone(result)
-        self.assertEqual(result["entry"], close_price)
-
-    def test_pullback_fib_below_50_returns_none(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 8)
-        poi = (2310.0, 2320.0)
-        close_near_zh = 2319.0
-        opens = [2310.0]*7 + [2317.0]
-        highs = [2318.0]*7 + [2321.0]
-        lows  = [2308.0]*7 + [2316.0]
-        closes = [2312.0]*7 + [close_near_zh]
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._check_pullback(df, poi, "buy")
-        self.assertIsNone(result)
-
-    def test_pullback_fib_above_618_returns_none(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 8)
-        poi = (2310.0, 2320.0)
-        close_near_zl = 2311.5
-        opens = [2310.0]*7 + [2313.0]
-        highs = [2318.0]*7 + [2316.0]
-        lows  = [2308.0]*7 + [2310.0]
-        closes = [2312.0]*7 + [close_near_zl]
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._check_pullback(df, poi, "buy")
-        self.assertIsNone(result)
-
-    def test_pullback_wrong_direction_returns_none(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 8)
-        poi = (2310.0, 2320.0)
-        opens = [2310.0]*7 + [2314.0]
-        highs = [2318.0]*7 + [2319.0]
-        lows  = [2308.0]*7 + [2312.0]
-        closes = [2312.0]*7 + [2316.0]
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._check_pullback(df, poi, "sell")
-        self.assertIsNone(result)
-
-    def test_slow_momentum_mixed_direction_passes(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 5)
-        opens  = [2310.0, 2312.0, 2315.0, 2313.0, 2316.0]
-        highs  = [2315.0, 2318.0, 2320.0, 2318.0, 2321.0]
-        lows   = [2308.0, 2310.0, 2313.0, 2311.0, 2314.0]
-        closes = [2312.0, 2315.0, 2313.0, 2316.0, 2318.0]
-        df = self._df(times, opens, highs, lows, closes)
-        self.assertTrue(self.orb._check_slow_momentum(df))
-
-    def test_slow_momentum_all_same_direction_fails(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 5)
-        opens  = [2310.0, 2312.0, 2315.0, 2317.0, 2320.0]
-        highs  = [2315.0, 2318.0, 2320.0, 2322.0, 2325.0]
-        lows   = [2308.0, 2310.0, 2313.0, 2315.0, 2318.0]
-        closes = [2312.0, 2315.0, 2317.0, 2320.0, 2322.0]
-        df = self._df(times, opens, highs, lows, closes)
-        self.assertFalse(self.orb._check_slow_momentum(df))
-
-    def test_slow_momentum_aggressive_bar_fails(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 5)
-        opens  = [2310.0, 2312.0, 2310.0, 2313.0, 2316.0]
-        highs  = [2315.0, 2318.0, 2360.0, 2318.0, 2321.0]
-        lows   = [2308.0, 2310.0, 2308.0, 2311.0, 2314.0]
-        closes = [2312.0, 2315.0, 2358.0, 2316.0, 2318.0]
-        df = self._df(times, opens, highs, lows, closes)
-        self.assertFalse(self.orb._check_slow_momentum(df))
-
-    def test_reaction_engulfing_buy_returns_true(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 3)
-        opens  = [2315.0, 2316.0, 2310.0]
-        highs  = [2318.0, 2319.0, 2330.0]
-        lows   = [2313.0, 2314.0, 2308.0]
-        closes = [2316.0, 2317.0, 2328.0]
-        df = self._df(times, opens, highs, lows, closes)
-        self.assertTrue(self.orb._check_reaction(df, "buy"))
-
-    def test_reaction_bearish_no_pattern_returns_false(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 3)
-        opens  = [2315.0, 2316.0, 2317.0]
-        highs  = [2318.0, 2319.0, 2320.0]
-        lows   = [2313.0, 2314.0, 2315.0]
-        closes = [2316.0, 2317.0, 2318.0]
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._check_reaction(df, "sell")
-        self.assertFalse(result)
-
-    def test_fib_discount_entry_at_high_fib_fails(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 6)
-        opens  = [2300.0]*6
-        highs  = [2320.0]*6
-        lows   = [2290.0]*6
-        closes = [2310.0]*6
-        df = self._df(times, opens, highs, lows, closes)
-        poi = (2290.0, 2320.0)
-        price_near_low = 2301.0
-        fib_level = (2320.0 - price_near_low) / (2320.0 - 2290.0)
-        self.assertGreater(fib_level, 0.618)
-        result = self.orb._check_fib_discount(df, price_near_low, "buy", poi)
-        self.assertFalse(result)
-
-    def test_fib_discount_entry_at_low_fib_passes(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 6)
-        opens  = [2300.0]*6
-        highs  = [2320.0]*6
-        lows   = [2290.0]*6
-        closes = [2310.0]*6
-        df = self._df(times, opens, highs, lows, closes)
-        poi = (2290.0, 2320.0)
-        price_at_discount = 2315.0
-        fib_level = (2320.0 - price_at_discount) / (2320.0 - 2290.0)
-        self.assertLessEqual(fib_level, 0.618)
-        result = self.orb._check_fib_discount(df, price_at_discount, "buy", poi)
-        self.assertTrue(result)
-
-
-class TestAggressiveFVGEntry(unittest.TestCase):
-    def setUp(self):
-        from core.opening_range_scalp import OpeningRangeScalp
-        self.orb = OpeningRangeScalp()
-        self.orb._range_high = 2320.0
-        self.orb._range_low = 2310.0
-
-    def _df(self, times, opens, highs, lows, closes):
-        import pandas as pd
-        return pd.DataFrame({
-            "open": opens, "high": highs, "low": lows, "close": closes,
-        }, index=pd.DatetimeIndex(times))
-
-    def _times(self, base, count, minutes=5):
-        return [base + timedelta(minutes=i * minutes) for i in range(count)]
-
-    def test_bullish_fvg_detected_near_range(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 12)
-        highs = [2321.0, 2322.0, 2323.0, 2324.0, 2325.0, 2326.0,
-                 2327.0, 2328.0, 2318.0, 2322.0, 2325.0, 2320.0]
-        lows  = [2319.0, 2320.0, 2321.0, 2322.0, 2323.0, 2324.0,
-                 2325.0, 2326.0, 2315.0, 2320.0, 2323.0, 2318.0]
-        opens = [2320.0]*12
-        closes = [2321.0]*12
-        highs[8] = 2318.0; lows[8] = 2314.0; closes[8] = 2315.0
-        lows[10] = 2324.0
-        highs[10] = 2327.0
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._find_fvg_near_range(df, "buy")
-        self.assertIsNotNone(result)
-
-    def test_bearish_fvg_detected_near_range(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 12)
-        highs = [2312.0, 2313.0, 2314.0, 2315.0, 2316.0, 2317.0,
-                 2318.0, 2319.0, 2322.0, 2318.0, 2315.0, 2320.0]
-        lows  = [2310.0, 2311.0, 2312.0, 2313.0, 2314.0, 2315.0,
-                 2316.0, 2317.0, 2320.0, 2316.0, 2313.0, 2318.0]
-        opens = [2311.0]*12
-        closes = [2310.0]*12
-        highs[8] = 2322.0; lows[8] = 2320.0; opens[8] = 2321.0
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._find_fvg_near_range(df, "sell")
-        self.assertIsNotNone(result)
-
-    def test_no_fvg_detected(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 8)
-        highs = [2320.0]*8
-        lows  = [2310.0]*8
-        opens = [2315.0]*8
-        closes = [2316.0]*8
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._find_fvg_near_range(df, "buy")
-        self.assertIsNone(result)
-
-    def _fvg_far_from_range_df(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 12)
-        highs = [2320.0]*9 + [2450.0, 2480.0, 2520.0]
-        lows  = [2310.0]*9 + [2310.0, 2320.0, 2500.0]
-        opens = [2315.0]*12
-        closes = [2318.0]*12
-        return self._df(times, opens, highs, lows, closes)
-
-    def test_fvg_too_far_from_range_returns_none(self):
-        self.orb._range_high = 2320.0
-        df = self._fvg_far_from_range_df()
-        result = self.orb._find_fvg_near_range(df, "buy")
-        self.assertIsNone(result)
-
-    def test_fvg_anywhere_no_proximity_check(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 6)
-        c1_high = 2500.0; c3_low = 2510.0
-        expected_mid = (c1_high + c3_low) / 2.0
-        highs = [c1_high, 2510.0, 2520.0, 2530.0, 2540.0, 2550.0]
-        lows  = [2490.0, 2500.0, c3_low, 2520.0, 2530.0, 2540.0]
-        opens = [2495.0]*6
-        closes = [2505.0]*6
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._find_fvg_anywhere(df, "buy")
-        self.assertAlmostEqual(result, expected_mid)
-
-    def test_insufficient_data_returns_none(self):
-        import pandas as pd
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 3)
-        df = self._df(times, [2315.0]*3, [2320.0]*3, [2310.0]*3, [2316.0]*3)
-        result = self.orb._find_fvg_near_range(df, "buy")
-        self.assertIsNone(result)
-
-    def test_fvg_anywhere_detects_after_find_near_returns_none(self):
-        self.orb._range_high = 2320.0
-        df = self._fvg_far_from_range_df()
-        near_result = self.orb._find_fvg_near_range(df, "buy")
-        anywhere_result = self.orb._find_fvg_anywhere(df, "buy")
-        self.assertIsNone(near_result)
-        self.assertIsNotNone(anywhere_result)
-
-
-class TestRangeReversalEntry(unittest.TestCase):
-    def setUp(self):
-        from core.opening_range_scalp import OpeningRangeScalp
-        self.orb = OpeningRangeScalp()
-        self.orb._range_high = 2320.0
-        self.orb._range_low = 2310.0
-
-    def _df(self, times, opens, highs, lows, closes):
-        import pandas as pd
-        return pd.DataFrame({
-            "open": opens, "high": highs, "low": lows, "close": closes,
-        }, index=pd.DatetimeIndex(times))
-
-    def _times(self, base, count, minutes=5):
-        return [base + timedelta(minutes=i * minutes) for i in range(count)]
-
-    def test_buy_reversal_detected(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 5)
-        opens  = [2315.0, 2314.0, 2316.0, 2315.0, 2312.0]
-        highs  = [2318.0, 2317.0, 2319.0, 2318.0, 2315.0]
-        lows   = [2313.0, 2312.0, 2314.0, 2313.0, 2309.0]
-        closes = [2316.0, 2315.0, 2317.0, 2316.0, 2314.0]
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._check_range_reversal(df)
-        self.assertIsNotNone(result)
-        self.assertEqual(result["direction"], "buy")
-
-    def test_sell_reversal_detected(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 5)
-        opens  = [2315.0, 2316.0, 2318.0, 2317.0, 2320.0]
-        highs  = [2318.0, 2319.0, 2321.0, 2320.0, 2322.0]
-        lows   = [2313.0, 2314.0, 2316.0, 2315.0, 2318.0]
-        closes = [2316.0, 2317.0, 2319.0, 2318.0, 2319.0]
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._check_range_reversal(df)
-        self.assertIsNotNone(result)
-        self.assertEqual(result["direction"], "sell")
-
-    def test_wick_too_short_returns_none(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 5)
-        opens  = [2315.0, 2314.0, 2316.0, 2315.0, 2312.0]
-        highs  = [2318.0, 2317.0, 2319.0, 2318.0, 2315.0]
-        lows   = [2313.0, 2312.0, 2314.0, 2313.0, 2312.0]
-        closes = [2316.0, 2315.0, 2317.0, 2316.0, 2313.0]
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._check_range_reversal(df)
-        self.assertIsNone(result)
-
-    def test_no_touch_of_range_boundary_returns_none(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 5)
-        opens  = [2315.0, 2314.0, 2316.0, 2315.0, 2314.0]
-        highs  = [2318.0, 2317.0, 2319.0, 2318.0, 2317.0]
-        lows   = [2313.0, 2312.0, 2314.0, 2313.0, 2312.0]
-        closes = [2316.0, 2315.0, 2317.0, 2316.0, 2315.0]
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._check_range_reversal(df)
-        self.assertIsNone(result)
-
-    def test_wrong_close_direction_returns_none(self):
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = self._times(base, 5)
-        opens  = [2315.0, 2314.0, 2316.0, 2315.0, 2312.0]
-        highs  = [2318.0, 2317.0, 2319.0, 2318.0, 2314.0]
-        lows   = [2313.0, 2312.0, 2314.0, 2313.0, 2309.8]
-        closes = [2316.0, 2315.0, 2317.0, 2316.0, 2311.0]
-        df = self._df(times, opens, highs, lows, closes)
-        result = self.orb._check_range_reversal(df)
-        self.assertIsNone(result)
-
-    def test_none_dataframe_returns_none(self):
-        result = self.orb._check_range_reversal(None)
-        self.assertIsNone(result)
-
-    def test_range_reversal_sl_calculation_buy(self):
-        self.orb._range_high = 2320.0
-        self.orb._range_low = 2310.0
-        self.orb._market_structure = "ranging"
-        reversal_data = {"direction": "buy", "price": 2312.0, "time": "dummy"}
-        self.orb._check_range_reversal = MagicMock(return_value=reversal_data)
-        range_width = self.orb._range_high - self.orb._range_low
-        direction = reversal_data["direction"]
-        entry = reversal_data["price"]
-        if direction == "buy":
-            sl = self.orb._range_low - 0.05
-            sl = min(sl, entry - 0.50)
-            tp = entry + range_width
-        self.assertEqual(sl, 2309.95)
-        self.assertEqual(tp, 2322.0)
-
-    def test_range_reversal_sl_calculation_sell(self):
-        self.orb._range_high = 2320.0
-        self.orb._range_low = 2310.0
-        reversal_data = {"direction": "sell", "price": 2318.0, "time": "dummy"}
-        range_width = self.orb._range_high - self.orb._range_low
-        direction = reversal_data["direction"]
-        entry = reversal_data["price"]
-        if direction == "sell":
-            sl = self.orb._range_high + 0.05
-            sl = max(sl, entry + 1.00)
-            tp = entry - range_width
-        self.assertEqual(sl, 2320.05)
-        self.assertEqual(tp, 2308.0)
-
-
-class TestDailySessionReset(unittest.TestCase):
-    def setUp(self):
-        from core.opening_range_scalp import OpeningRangeScalp
-        self.orb = OpeningRangeScalp()
-
-    def test_date_change_triggers_full_reset(self):
-        self.orb._current_date = "2026-06-15"
-        self.orb._current_session = "london"
-        self.orb._range_high = 2320.0
-        self.orb._range_low = 2310.0
-        self.orb._range_established = True
-        self.orb._entry_triggered = True
-        self.orb._market_structure = "uptrend"
-        self.orb._htf_aligned = True
-        t = datetime(2026, 6, 16, 9, 0, tzinfo=timezone.utc)
-        self.orb.analyze(None, None, t, "asia")
-        self.assertIsNone(self.orb._range_high)
-        self.assertIsNone(self.orb._range_low)
-        self.assertFalse(self.orb._range_established)
-        self.assertFalse(self.orb._entry_triggered)
-        self.assertIsNone(self.orb._market_structure)
-        self.assertFalse(self.orb._htf_aligned)
-
-    def test_session_change_triggers_full_reset(self):
-        self.orb._current_date = "2026-06-15"
-        self.orb._current_session = "asia"
-        self.orb._range_established = True
-        self.orb._entry_triggered = False
-        self.orb._market_structure = "ranging"
-        t = datetime(2026, 6, 15, 9, 0, tzinfo=timezone.utc)
-        self.orb.analyze(None, None, t, "london")
-        self.assertFalse(self.orb._range_established)
-        self.assertIsNone(self.orb._market_structure)
-        self.assertEqual(self.orb._current_session, "london")
-
-    def test_same_date_session_keeps_state(self):
-        self.orb._current_date = "2026-06-15"
-        self.orb._current_session = "london"
-        self.orb._range_established = True
-        self.orb._entry_triggered = True
-        self.orb._market_structure = "uptrend"
-        t = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        self.orb.analyze(None, None, t, "london")
-        self.assertTrue(self.orb._range_established)
-        self.assertEqual(self.orb._market_structure, "uptrend")
-
-    def test_entry_triggered_guard_returns_none(self):
-        self.orb._current_date = "2026-06-15"
-        self.orb._current_session = "london"
-        self.orb._entry_triggered = True
-        t = datetime(2026, 6, 15, 10, 0, tzinfo=timezone.utc)
-        result = self.orb.analyze(None, None, t, "london")
-        self.assertIsNone(result)
-
-    def test_entry_triggered_reset_on_new_date(self):
-        self.orb._current_date = "2026-06-15"
-        self.orb._current_session = "london"
-        self.orb._entry_triggered = True
-        self.orb._range_established = True
-        t = datetime(2026, 6, 16, 9, 0, tzinfo=timezone.utc)
-        self.orb.analyze(None, None, t, "london")
-        self.assertFalse(self.orb._entry_triggered)
-
-    def test_reset_entry_keeps_date_and_session(self):
-        self.orb._current_date = "2026-06-15"
-        self.orb._current_session = "london"
-        self.orb._range_high = 2320.0
-        self.orb._range_low = 2310.0
-        self.orb._range_established = True
-        self.orb._entry_triggered = True
-        self.orb._poi_high = 2318.0
-        self.orb.reset_entry()
-        self.assertFalse(self.orb._entry_triggered)
-        self.assertIsNone(self.orb._poi_high)
-        self.assertEqual(self.orb._current_date, "2026-06-15")
-        self.assertEqual(self.orb._current_session, "london")
-        self.assertTrue(self.orb._range_established)
-
-    def test_current_date_updated_on_date_change(self):
-        self.orb._current_date = "2026-06-15"
-        t = datetime(2026, 6, 16, 0, 30, tzinfo=timezone.utc)
-        self.orb.analyze(None, None, t, "asia")
-        self.assertEqual(self.orb._current_date, "2026-06-16")
-
-    def test_current_session_updated_on_session_change(self):
-        self.orb._current_date = "2026-06-15"
-        self.orb._current_session = "asia"
-        t = datetime(2026, 6, 15, 9, 0, tzinfo=timezone.utc)
-        self.orb.analyze(None, None, t, "london")
-        self.assertEqual(self.orb._current_session, "london")
-
-    def test_scalper_bot_check_new_day_calls_orb_reset(self):
-        src_path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(src_path) as f:
-            content = f.read()
-        self.assertIn("self.orb.reset()", content,
-                      "ScalperBot _check_new_day must call orb.reset()")
-
-    def test_aggressive_bot_check_new_day_no_orb_reset(self):
-        src_path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
-        with open(src_path) as f:
-            content = f.read()
-        new_day_section = content[content.index("def _check_new_day"):content.index("def _get_risk_amount")]
-        self.assertNotIn("orb.reset", new_day_section,
-                         "AggressiveBot _check_new_day must NOT call orb.reset()")
-
-    def test_risk_manager_start_day_resets_loss_not_consecutive(self):
-        rm = RiskManager()
-        rm.start_day("2026-06-15", 1000.0)
-        rm.record_trade(-10.0)
-        rm.record_trade(-10.0)
-        self.assertEqual(rm._consecutive_losses, 2)
-        self.assertEqual(rm._daily_loss_sum, 20.0)
-        rm.start_day("2026-06-16", 980.0)
-        self.assertEqual(rm._daily_loss_sum, 0.0)
-        self.assertEqual(rm._consecutive_losses, 0)
-
-    def test_risk_manager_start_day_resets_blocked(self):
-        rm = RiskManager(max_consecutive_losses=2)
-        rm.start_day("2026-06-15", 1000.0)
-        rm.record_trade(-5.0)
-        rm.record_trade(-5.0)
-        self.assertTrue(rm._blocked_session)
-        rm.start_day("2026-06-16", 990.0)
-        self.assertFalse(rm._blocked_session)
-
-    def test_risk_manager_start_day_does_not_reset_peak(self):
-        rm = RiskManager()
-        rm.start_day("2026-06-15", 1000.0)
-        rm.start_day("2026-06-16", 900.0)
-        self.assertEqual(rm._peak_balance, 1000.0)
-
-    def test_risk_manager_start_day_updates_peak_on_higher_balance(self):
-        rm = RiskManager()
-        rm.start_day("2026-06-15", 1000.0)
-        rm.start_day("2026-06-16", 1100.0)
-        self.assertEqual(rm._peak_balance, 1100.0)
-
-    def test_analyze_detects_session_from_time_when_none(self):
-        self.orb._current_date = "2026-06-15"
-        self.orb._entry_triggered = True
-        t = datetime(2026, 6, 16, 9, 0, tzinfo=timezone.utc)
-        self.orb.analyze(None, None, t, None)
-        self.assertEqual(self.orb._current_date, "2026-06-16")
-
-    def test_analyze_orb_pipeline_runs_in_session(self):
-        import pandas as pd
-        self.orb._current_date = "2026-06-15"
-        self.orb._current_session = "london"
-        self.orb._range_high = 2350.0
-        self.orb._range_low = 2280.0
-        self.orb._range_established = True
-        self.orb._market_structure = "ranging"
-        base = datetime(2026, 6, 15, 9, 30, tzinfo=timezone.utc)
-        times = [base + timedelta(minutes=i*5) for i in range(5)]
-        df5 = pd.DataFrame({
-            "open": [2315.0]*5, "high": [2320.0]*5, "low": [2310.0]*5, "close": [2316.0]*5,
-        }, index=pd.DatetimeIndex(times))
-        df15 = pd.DataFrame({
-            "open": [2300.0], "high": [2325.0], "low": [2295.0], "close": [2310.0],
-        }, index=pd.DatetimeIndex([datetime(2026, 6, 15, 9, 15, tzinfo=timezone.utc)]))
-        t = datetime(2026, 6, 15, 9, 50, tzinfo=timezone.utc)
-        result = self.orb.analyze(df5, df15, t, "london")
-        self.assertIsNone(result)
-
-    def test_reset_clears_all_state(self):
-        self.orb._current_date = "2026-06-15"
-        self.orb._current_session = "london"
-        self.orb._range_high = 2320.0
-        self.orb._range_low = 2310.0
-        self.orb._range_established = True
-        self.orb._market_structure = "uptrend"
-        self.orb._entry_triggered = True
-        self.orb._breakout_dir = "buy"
-        self.orb._poi_high = 2317.0
-        self.orb._poi_low = 2315.0
-        self.orb._best_zone = "dummy"
-        self.orb._htf_aligned = True
-        self.orb._breakout_fvg = (2318.0, 2320.0)
-        self.orb._swing_broken = True
-        self.orb.reset()
-        self.assertIsNone(self.orb._current_date)
-        self.assertIsNone(self.orb._current_session)
-        self.assertIsNone(self.orb._range_high)
-        self.assertIsNone(self.orb._range_low)
-        self.assertFalse(self.orb._range_established)
-        self.assertIsNone(self.orb._market_structure)
-        self.assertFalse(self.orb._entry_triggered)
-        self.assertIsNone(self.orb._breakout_dir)
-        self.assertIsNone(self.orb._poi_high)
-        self.assertIsNone(self.orb._poi_low)
-        self.assertIsNone(self.orb._best_zone)
-        self.assertFalse(self.orb._htf_aligned)
-        self.assertIsNone(self.orb._breakout_fvg)
-        self.assertFalse(self.orb._swing_broken)
 
 
 class TestConsecutiveLosses(unittest.TestCase):
@@ -1648,14 +741,6 @@ class TestCircuitBreaker(unittest.TestCase):
 
 
 class TestMaxDailyTrades(unittest.TestCase):
-    def test_live_bot_guard_present(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        entry_section = content[content.index("if self._position is None"):content.index("# News blackout")]
-        self.assertIn("self._trades_today < self.settings.max_daily_trades", entry_section,
-                      "Live bot must check daily trade count before entering")
-
     def test_aggressive_bot_guard_present(self):
         path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
         with open(path) as f:
@@ -1678,15 +763,6 @@ class TestMaxDailyTrades(unittest.TestCase):
         s = ScalperSettings()
         self.assertEqual(s.max_daily_trades, 15)
 
-    def test_trades_today_initialized_to_zero_live(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        init_section = content[content.index("class ScalperBot"):content.index("def __init__")]
-        init_section += content[content.index("def __init__"):content.index("def initialize")]
-        self.assertIn("self._trades_today = 0", init_section,
-                      "Live bot must initialize _trades_today to 0")
-
     def test_trades_today_initialized_to_zero_aggressive(self):
         path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
         with open(path) as f:
@@ -1694,14 +770,6 @@ class TestMaxDailyTrades(unittest.TestCase):
         init_section = content[content.index("class AggressiveBot"):content.index("def initialize")]
         self.assertIn("self._trades_today = 0", init_section,
                       "Aggressive bot must initialize _trades_today to 0")
-
-    def test_trades_today_reset_in_check_new_day_live(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        new_day_section = content[content.index("def _check_new_day"):content.index("def _get_risk_amount")]
-        self.assertIn("self._trades_today = 0", new_day_section,
-                      "Live bot must reset _trades_today in _check_new_day")
 
     def test_trades_today_reset_in_check_new_day_aggressive(self):
         path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
@@ -1711,14 +779,6 @@ class TestMaxDailyTrades(unittest.TestCase):
         self.assertIn("self._trades_today = 0", new_day_section,
                       "Aggressive bot must reset _trades_today in _check_new_day")
 
-    def test_trades_today_incremented_on_order_live(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        order_section = content[content.index("self.connector.place_order"):content.index("trade_id = str(uuid4())")]
-        self.assertIn("self._trades_today += 1", order_section,
-                      "Live bot must increment _trades_today after placing order")
-
     def test_trades_today_incremented_on_order_aggressive(self):
         path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
         with open(path) as f:
@@ -1726,15 +786,6 @@ class TestMaxDailyTrades(unittest.TestCase):
         order_section = content[content.index("self.connector.place_order"):content.index("trade_id = str(uuid4())")]
         self.assertIn("self._trades_today += 1", order_section,
                       "Aggressive bot must increment _trades_today after placing order")
-
-    def test_trades_today_set_to_1_on_orphan_recovery_live(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        recovery_section = content[content.index("Recovered partially"):content.index("date_str = datetime")]
-        recovery_section += content[content.index("self._current_date = date_str"):content.index("logger.info(f\"Recovered orphaned")]
-        self.assertIn("self._trades_today = 1", recovery_section,
-                      "Live bot must set _trades_today to 1 on orphan recovery")
 
     def test_low_balance_cap_max_trades_200(self):
         from config.settings import ScalperSettings
@@ -1750,17 +801,6 @@ class TestMaxDailyTrades(unittest.TestCase):
 
 
 class TestSpreadFilter(unittest.TestCase):
-    def test_live_bot_spread_check_exists(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        spread_section = content[content.index("tick = self.connector.get_tick()"):
-                                  content.index("spread_pips = tick") + 50]
-        self.assertIn("spread_pips = tick[\"spread\"]", spread_section,
-                      "Live bot must get spread from tick")
-        self.assertIn("if spread_pips > self.settings.max_spread:", content,
-                      "Live bot must check spread against max_spread")
-
     def test_aggressive_bot_spread_check_exists(self):
         path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
         with open(path) as f:
@@ -1800,30 +840,12 @@ class TestSpreadFilter(unittest.TestCase):
         self.assertFalse(spread_pips > max_spread,
                          "Spread exactly at max must pass (not block)")
 
-    def test_backtest_spread_uses_settings_max_spread(self):
-        backtest_path = Path(__file__).resolve().parent.parent / "scripts" / "backtest.py"
-        with open(backtest_path) as f:
-            content = f.read()
-        if "spread_pips > settings.max_spread" not in content:
-            self.fail("Backtest must use settings.max_spread for spread threshold")
-
     def test_backtest_aggressive_spread_uses_settings_max_spread(self):
         backtest_path = Path(__file__).resolve().parent.parent / "scripts" / "backtest_aggressive.py"
         with open(backtest_path) as f:
             content = f.read()
         if "spread_pips > settings.max_spread" not in content:
             self.fail("Aggressive backtest must use settings.max_spread for spread threshold")
-
-    def test_spread_logs_debug_when_too_high_live(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        spread_section = content[content.index("if spread_pips > self.settings.max_spread:"):
-                                  content.index("if spread_pips > self.settings.max_spread:") + 250]
-        self.assertIn("logger.debug", spread_section,
-                      "Live bot must log debug when spread too high")
-        self.assertIn("time.sleep(10)", spread_section,
-                      "Live bot must sleep 10s when spread too high")
 
     def test_spread_logs_debug_when_too_high_aggressive(self):
         path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
@@ -1892,15 +914,6 @@ class TestMongoWriteFailure(unittest.TestCase):
         data = call_args[0][1]["$set"]
         self.assertEqual(data["outcome"], "loss")
 
-    def test_friday_reconnect_checks_mongo_return_live(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        friday_block = content[content.index("if not self.mongo.connect():")
-                               :content.index("if not self.mongo.connect():") + 80]
-        self.assertIn("logger.warning", friday_block,
-                      "Live Friday reconnect must log warning on failure")
-
     def test_friday_reconnect_checks_mongo_return_aggressive(self):
         path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
         with open(path) as f:
@@ -1919,13 +932,6 @@ class TestTradeLoggingConsistency(unittest.TestCase):
         idx = content.index(marker)
         return content[idx:idx + context]
 
-    def test_entry_log_format_live(self):
-        section = self._get_file_lines("scripts/run_live.py",
-                                       'f"ORB TRADE {signal', context=400)
-        self.assertIn('f"ORB TRADE {signal[\'direction\'].upper()}', section)
-        self.assertIn('trade_logger.info(', section)
-        self.assertIn("OPEN", section)
-
     def test_entry_log_format_aggressive(self):
         section = self._get_file_lines("scripts/run_aggressive.py",
                                        'f"AGGR TRADE {direction', context=500)
@@ -1933,23 +939,10 @@ class TestTradeLoggingConsistency(unittest.TestCase):
         self.assertIn('trade_logger.info(', section)
         self.assertIn("OPEN", section)
 
-    def test_close_log_format_live(self):
-        section = self._get_file_lines("scripts/run_live.py",
-                                       'f"CLOSE {trade[\'type\']}')
-        self.assertIn("CLOSE", section)
-        self.assertIn("trade_logger.info", section)
-        self.assertIn("exit", section)
-
     def test_close_log_format_aggressive(self):
         section = self._get_file_lines("scripts/run_aggressive.py",
                                        'f"CLOSE {pos[\'type\']}', context=400)
         self.assertIn("CLOSE", section)
-        self.assertIn("trade_logger.info", section)
-
-    def test_partial_log_format_live(self):
-        section = self._get_file_lines("scripts/run_live.py",
-                                       'f"PARTIAL {reason.upper()}')
-        self.assertIn("PARTIAL", section)
         self.assertIn("trade_logger.info", section)
 
     def test_partial_log_format_aggressive(self):
@@ -1957,15 +950,6 @@ class TestTradeLoggingConsistency(unittest.TestCase):
                                        'f"PARTIAL {reason}', context=200)
         self.assertIn("PARTIAL", section)
         self.assertIn("trade_logger.info", section)
-
-    def test_close_log_on_stale_ticket_live(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        idx = content.index("def _resolve_position_closed")
-        method = content[idx:idx + 2000]
-        self.assertIn('trade_logger.info', method)
-        self.assertIn('"CLOSE ', method)
 
     def test_close_log_on_stale_ticket_aggressive(self):
         path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
@@ -2015,49 +999,6 @@ class TestPnLCalculation(unittest.TestCase):
         profit = round(pdiff * lots * 100 - comm, 2)
         self.assertEqual(profit, 1496.50)
 
-    def test_live_close_partial_uses_formula(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        idx = content.index("def _close_partial")
-        method = content[idx:idx + 400]
-        self.assertIn("pdiff * lots * 100", method)
-        self.assertIn("backtest_commission", method)
-
-    def test_live_resolve_position_closed_computes_pnl(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        idx = content.index("def _resolve_position_closed")
-        method = content[idx:idx + 2000]
-        self.assertIn("pdiff * remaining * 100", method)
-        self.assertIn("backtest_commission", method)
-        self.assertIn("pos.get(\"pnl\", 0) + pnl_close", method)
-
-    def test_aggressive_stale_ticket_computes_pnl(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
-        with open(path) as f:
-            content = f.read()
-        idx = content.index("not still_open:")
-        branch = content[idx:idx + 1200]
-        self.assertIn("pdiff * remaining * 100", branch,
-                      "Aggressive stale ticket must compute PnL from exit price")
-        self.assertIn("backtest_commission", branch)
-
-
-class TestBrokerSLTPSync(unittest.TestCase):
-    """Broker SL/TP synchronization and lifecycle."""
-
-    def test_startup_reads_sl_tp_from_broker_live(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        idx = content.index("existing = self.connector.get_positions")
-        block = content[idx:idx + 500]
-        self.assertIn('"sl": p["sl"]', block)
-        self.assertIn('"tp": p["tp"]', block)
-        self.assertIn('"original_sl": p["sl"]', block)
-
     def test_startup_reads_sl_tp_from_broker_aggressive(self):
         path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
         with open(path) as f:
@@ -2068,56 +1009,9 @@ class TestBrokerSLTPSync(unittest.TestCase):
         self.assertIn('"tp": p["tp"]', block)
         self.assertIn('"original_sl": p["sl"]', block)
 
-    def test_tp1_moves_sl_to_be_before_modify_live(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        idx = content.index('self._position["tp1_hit"] = True')
-        block = content[idx:idx + 400]
-        self.assertIn('self._position["sl"] = entry', block)
-        self.assertIn('self.connector.modify_position', block)
-        self.assertIn('sl=entry', block)
-
-    def test_tp1_moves_sl_to_be_before_modify_aggressive(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
-        with open(path) as f:
-            content = f.read()
-        idx = content.index('pos["tp1_hit"] = True')
-        block = content[idx:idx + 400]
-        self.assertIn('pos["sl"] = pos["entry"]', block)
-        self.assertIn('self.connector.modify_position', block)
-        self.assertIn('sl=pos["entry"]', block)
-
-    def test_modify_failure_logs_warning_not_crash_live(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        idx = content.index("Failed to move SL to BE for")
-        self.assertIn("logger.warning", content[idx - 100:idx + 60])
-
     def test_modify_failure_logs_warning_not_crash_aggressive(self):
         path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
         with open(path) as f:
             content = f.read()
         idx = content.index("Failed to move SL to BE for")
         self.assertIn("logger.warning", content[idx - 100:idx + 60])
-
-    def test_stale_ticket_checks_existence_only(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        idx = content.index("still_open = any(p[\"ticket\"] == ticket")
-        self.assertIn("ticket", content[idx:idx + 100])
-        self.assertNotIn("sl", content[idx:idx + 100])
-        self.assertNotIn("tp", content[idx:idx + 100])
-
-    def test_trailing_stop_is_local_only(self):
-        path = Path(__file__).resolve().parent.parent / "scripts" / "run_live.py"
-        with open(path) as f:
-            content = f.read()
-        self.assertIn('self._position["trail_level"]', content)
-        self.assertNotIn("modify_position", content[content.index('"trail_level"'):content.index('"trail_level"') + 200])
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)

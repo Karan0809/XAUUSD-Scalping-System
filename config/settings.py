@@ -35,7 +35,10 @@ class ScalperSettings:
     max_slippage_points: float = 0.50
 
     trailing_stop_enabled: bool = True
-    trail_multiplier: float = 0.2
+    trail_multiplier: float = 0.3
+
+    max_trades_per_day: int = 5
+    strategy_label: str = "Mindspace"
 
     news_filter_enabled: bool = False
     news_blackout_minutes: int = 30
@@ -89,6 +92,8 @@ class ScalperSettings:
             errors.append("risk_percent must be between 0 and 5")
         if self.max_daily_trades < 1:
             errors.append("max_daily_trades must be >= 1")
+        if self.max_trades_per_day < 1:
+            errors.append("max_trades_per_day must be >= 1")
         if errors:
             raise ValueError(f"Settings validation failed: {', '.join(errors)}")
         return True
