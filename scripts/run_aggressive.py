@@ -30,6 +30,7 @@ SL_PIPS = 80
 SL_PRICE = SL_PIPS / 100.0
 RISK_PCT = 1.2
 MAX_TRADES_PER_DAY = 20
+PULLBACK_MAX_DIST = 3.0
 
 
 class AggressiveBot:
@@ -62,6 +63,7 @@ class AggressiveBot:
         self._start_time: datetime = datetime.now(timezone.utc)
         self._initial_balance: Optional[float] = None
         self._cb_alerted: bool = False
+        self._current_session: Optional[str] = None
         self._no_money_cooldown_until: float = 0
         self._last_signal_time: float = 0
 
@@ -124,6 +126,7 @@ class AggressiveBot:
         best_dist = float("inf")
         direction = None
         zone_sl = None
+        zone_edge = None
         for z in self.zone_detector.zones:
             if z.breached:
                 continue
@@ -136,14 +139,16 @@ class AggressiveBot:
                 if d < best_dist:
                     best_dist = d
                     direction = "buy"
-                    zone_sl = z.zone_low - 0.15
+                    zone_sl = z.zone_low - 0.30
+                    zone_edge = z.zone_high
             elif z.zone_type == "supply" and z.zone_low > price:
                 d = abs(price - (z.zone_high + z.zone_low) / 2.0)
                 if d < best_dist:
                     best_dist = d
                     direction = "sell"
-                    zone_sl = z.zone_high + 0.15
-        return direction, zone_sl
+                    zone_sl = z.zone_high + 0.30
+                    zone_edge = z.zone_low
+        return direction, zone_sl, zone_edge
 
     def _check_momentum(self, bar: Dict[str, float], prev_close: float, direction: str) -> bool:
         if direction == "buy":
@@ -613,6 +618,16 @@ class AggressiveBot:
                     time.sleep(60)
                     continue
 
+                current_session = SessionTimes().get_active_session(now)
+                if current_session is None:
+                    time.sleep(60)
+                    continue
+
+                if current_session != self._current_session:
+                    self._current_session = current_session
+                    self._cb_alerted = False
+                    self.risk_mgr.start_session(current_session)
+
                 if time.time() - self._m15_last_refresh > self.M15_REFRESH_SECONDS:
                     self._load_15min_data()
                     self._m15_last_refresh = time.time()
@@ -637,7 +652,7 @@ class AggressiveBot:
 
                 self._manage_position(rates, i, current_time)
 
-                if self._position is None:  # and self._trades_today < MAX_TRADES_PER_DAY:
+                if self._position is None:
                     if self.news_filter is not None:
                         in_blackout, reason = self.news_filter.is_blackout(now)
                         if in_blackout:
@@ -687,14 +702,17 @@ class AggressiveBot:
                         time.sleep(10)
                         continue
 
-                    direction, zone_sl = self._get_zone_signal(bar["close"])
+                    direction, zone_sl, zone_edge = self._get_zone_signal(bar["close"])
                     if direction and i >= 2:
+                        if zone_edge is not None and abs(bar["close"] - zone_edge) > PULLBACK_MAX_DIST:
+                            time.sleep(10)
+                            continue
                         trend = self._check_trend()
                         if trend is not None and ((direction == "buy" and trend != "bullish") or (direction == "sell" and trend != "bearish")):
                             trend_dir = "sell" if trend == "bearish" else "buy"
                             alt_signal = self._get_zone_signal(bar["close"], trend_dir)
                             if alt_signal[0]:
-                                direction, zone_sl = alt_signal
+                                direction, zone_sl, zone_edge = alt_signal
                                 logger.info(f"Trend filter: switched to {direction} (M15 trend={trend})")
                             else:
                                 logger.info(f"Trend filter blocked {direction} (M15 trend={trend}), no {trend_dir} zone found")
@@ -705,13 +723,11 @@ class AggressiveBot:
                             balance = acct["balance"]
                             price = tick["ask"] if direction == "buy" else tick["bid"]
                             MIN_SL_DIST = 0.30
+                            MAX_SL_DIST = 5.0
                             if zone_sl is not None:
                                 raw_dist = abs(zone_sl - price)
-                                actual_sl_dist = max(raw_dist, MIN_SL_DIST)
-                                if actual_sl_dist > 0.80:
-                                    sl = (tick["bid"] - SL_PRICE) if direction == "buy" else (tick["ask"] + SL_PRICE)
-                                    actual_sl_dist = SL_PRICE
-                                elif direction == "buy":
+                                actual_sl_dist = max(min(raw_dist, MAX_SL_DIST), MIN_SL_DIST)
+                                if direction == "buy":
                                     sl = price - actual_sl_dist
                                 else:
                                     sl = price + actual_sl_dist

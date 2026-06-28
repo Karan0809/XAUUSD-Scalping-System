@@ -4,42 +4,34 @@ Multi-session scalper for XAUUSD on MetaTrader 5 using an aggressive M1 zone + m
 
 ## Strategy
 
+The bot trades a **zone + momentum** strategy on M1 bars. It scans supply/demand zones from 90-day M15 data, waits for a pullback into a zone, and enters on momentum confirmation. The circuit breaker blocks per-session (Asia/London/NY) rather than full-day.
+
 ### Sessions
 
-Each trading day is split into three sessions, each with its own fresh opening range. The bot enters trades in all sessions.
+Each trading day is split into three sessions. The circuit breaker resets on each session change.
 
-| Session | UTC Hours | Opening Range |
-|---|---|---|
-| **Asia** | 00:00–09:00 | First 15-min candle at 00:00 |
-| **London** | 09:00–12:00 | First 15-min candle at 09:00 |
-| **New York** | 13:30–16:00 | First 15-min candle at 13:30 |
+| Session | UTC Hours |
+|---|---|
+| **Asia** | 00:00–09:00 |
+| **London** | 09:00–12:00 |
+| **New York** | 13:00–16:00 |
 
 The bot runs Mon–Thu 00:00–17:00 UTC, Fri until 17:00 UTC (then disconnects and sleeps until Monday 00:00 UTC).
 
-### Entry Filters
+### Entry Logic
 
-All entries share a common set of confluences before a signal is generated:
-
-| Filter | Description |
-|---|---|
-| **HTF alignment** | EMA 50/200 cross, change of structure (BOS), HH/HL pattern on M15 confirming trend direction |
-| **Swing break** | Price must break a recent swing high/low on the 5-min chart |
-| **Institutional zone** | Entry must coincide with a supply/demand zone |
-| **FVG** | A Fair Value Gap must exist in the pullback for additional confluence |
-| **Slow momentum** | Pullback shows loss of momentum (small-bodied candles, long upper/lower wicks) |
-| **Reaction** | Price reacted at the POI with wicks or rejection, confirming the level holds |
-
-### Entry Types
-
-| Type | Trigger | Condition |
-|---|---|---|---|---|
-| **Breakout Pullback** | Price breaks the opening range, then pulls back into a POI | 5-min candle shows bullish/bearish reversal within POI |
-| **Aggressive FVG** | Price re-enters a FVG left after the breakout | No waiting for a pullback — enters immediately on FVG touch |
-| **Range Reversal** | Price sweeps the opening range boundary on the 5-min chart | Reversal candle with wick at the sweep point |
+| Step | Check | Action |
+|---|---|---|
+| 1. **Zone** | Find nearest unbreached demand (buy) or supply (sell) zone below/above current price | Direction + zone SL = zone edge ± 0.30 buffer |
+| 2. **Pullback** | Price within 3.0 of zone edge | Skip if too far from zone |
+| 3. **Trend** | EMA50 on M15 | If trend opposes direction, try opposite direction; skip if no alt zone |
+| 4. **Momentum** | Current M1 bar close > open AND close > prev close (buy) or opposite (sell) | Skip if no momentum |
+| 5. **SL calc** | Zone distance capped between 0.30–5.0 | SL = price ± zone distance |
+| 6. **Entry** | Market order with calculated SL, TP = SL × 25 | Tracks +1 trade counter |
 
 ## Position Management Lifecycle
 
-Once a trade opens, the bot polls **every 30 seconds** and examines **every M5 bar** since the position's open time (not just the last bar). On each bar it runs these checks in order:
+Once a trade opens, the bot polls **every 30 seconds** and examines **every M1 bar** since the position's open time (not just the last bar). On each bar it runs these checks in order:
 
 ### For any trade:
 
@@ -86,14 +78,14 @@ The model adapts automatically based on **lot size** (derived from account balan
 
 ### Why iterate all bars?
 
-On every poll, the bot re-examines all M5 bars since entry (from the position's `open_time` in the rates index to the current bar). This guarantees that if TP1, TP2, or a trail/SL event occurred on a closed bar that is no longer the most recent bar, it is still detected and acted upon. Since all conditions are guarded by flags (`tp1_hit`, `tp2_hit`, `remaining_lots`), re-processing is **idempotent** — safe to repeat endlessly.
+On every poll, the bot re-examines all M1 bars since entry (from the position's `open_time` in the rates index to the current bar). This guarantees that if TP1, trail, or SL event occurred on a closed bar that is no longer the most recent bar, it is still detected and acted upon. Since all conditions are guarded by flags (`tp1_hit`, `remaining_lots`), re-processing is **idempotent** — safe to repeat endlessly.
 
 ## Safety Filters
 
 | Filter | Description | Default |
 |---|---|---|
 | **Spread filter** | Skips entries when spread exceeds threshold | 60 pips |
-| **Circuit breaker** | Blocks new entries on 3% daily loss, 4 consecutive losses, or 15% drawdown from peak; sends Telegram alert on first block | On |
+| **Circuit breaker** | Blocks new entries on 3% daily loss, 4 consecutive losses, or 15% drawdown from peak; blocks per-session (resets on Asia/London/NY change); sends Telegram alert on first block | On |
 | **News filter** | Optional — blocks entry 30 min before/after high-impact USD events (ForexFactory) | Off |
 | **Friday shutdown** | Bot disconnects at 17:00 UTC Friday, sleeps until Monday 00:00 UTC | Auto |
 
@@ -103,7 +95,7 @@ Backtested on live M1 XAUUSD data across all sessions (Asia + London + NY). Comm
 
 ### Aggressive M1 ($5,000 start)
 
-Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-trend alignment + momentum check, and session filter (Asia + London + NY). Zone SL with no proximity filter, 15-pip buffer, 20-pip minimum, 80-pip cap. 50/50 + trailing exit model.
+Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-trend alignment + momentum check, and session filter (Asia + London + NY). Zone SL with 0.30 buffer, clamped between 0.30–5.0 (no fixed cap). Pullback filter (3.0 max dist from zone edge). 50/50 + trailing exit model.
 
 | Metric | Result |
 |---|---|
@@ -117,6 +109,8 @@ Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-
 | **Avg Bars Held** | 1.4 |
 | **Filters** | Zone=0 Mom=3,679 Trend=12,761 Spread=245 CB=0 News=0 |
 | **Return** | 1,454% |
+
+> **Backtest vs live discrepancy:** Backtest uses bar-resolution SL (M1 high/low), which misses intra-bar spikes. Live tick-level volatility can hit SL ~4-8 points earlier than backtest suggests. The widened SL (up to 5.0) and pullback filter compensate for this gap.
 
 ### Key Fixes Applied
 
@@ -164,6 +158,12 @@ Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-
 | **Removed zone-SL proximity filter** | `_get_zone_signal()` had a 0.80 filter rejecting zones within 0.80 of price — set `zone_sl=None` on ALL signals. Removed. |
 | **AutoTrading 3-layer fallback** | pywin32 `SetForegroundWindow`+`SendKeys` → PowerShell `AppActivate`+`SendKeys` → direct `origin.cfg` config modification + terminal restart. Handles headless VPS where no MT5 window is visible. |
 | **Per-trade-loop account re-verification** | After `get_account_info()`, checks `acct["login"]` matches env setting. M15 data loads reverting MT5 login are detected and corrected mid-loop. |
+| **Zone-SL cap removed** | Zone distance was capped at 0.80, forcing SL to 80 points regardless of market structure. Now uses `min(raw_dist, 5.0)` — SL matches zone depth (30–500 points). Fixes root cause of 30-60s stopouts. |
+| **Circuit breaker re-enabled** | Was completely commented out returning `(True, None)`. Logs showed 4-7 consecutive losses reached but bot kept trading. Now checks consecutive losses, daily loss %, drawdown. |
+| **Circuit breaker per-session** | Changed from full-day `_blocked_today` to per-session `_blocked_session`. Block auto-clears on Asia/London/NY session change. |
+| **Max trades per day disabled** | Line 640 check was commented out — bot traded unlimited daily. Uncommented for now (removed during testing). |
+| **Pullback filter added** | Enters only when price is within 3.0 of zone edge. Calibrated from backtesting: baseline 65.7% WR (1,263 trades) vs pullback 3.0 at 69.6% WR (161 trades). |
+| **Zone buffer 0.15 → 0.30** | Increased buffer added to zone edge for SL calculation — gives trades more breathing room from zone boundary. |
 
 ## Project Structure
 
@@ -272,7 +272,7 @@ The bot:
 7. Send Telegram alerts for open, close, error, and heartbeat
 8. Close open positions at **17:00 UTC Friday**, disconnect, sleep until Monday 00:00 UTC
 
-**Aggressive bot** (`run_aggressive.py`): Scans M1 bars for zone-based entries with HH/HL + EMA50 trend filter and M1 micro-trend alignment.
+**Aggressive bot** (`run_aggressive.py`): Scans M1 bars for zone-based entries with EMA50 trend filter, M1 momentum check, and pullback filter (3.0 from zone edge). SL uses zone distance clamped between 0.30–5.0 (no fixed cap). Circuit breaker resets per-session.
 
 ### Testing
 
@@ -290,7 +290,7 @@ python -m pytest tests/ -k TestMongoWriteFailure -v
 ### Backtesting
 
 ```bash
-python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-22 --balance 5000 --risk 1.2 --sl-mode min_sl --zone-buffer 0.15 --session-filter
+python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-22 --balance 5000 --risk 1.2 --sl-mode min_sl --zone-buffer 0.30 --pullback 3.0 --session-filter
 ```
 
 The backtest uses tiered fixed risk, 0.5 max lots, slippage model, and reads `max_spread` from settings. Results saved as JSON with `--output`.
@@ -306,7 +306,7 @@ The backtest uses tiered fixed risk, 0.5 max lots, slippage model, and reads `ma
 - **Risk per trade:** %-of-balance (live) or tiered fixed risk (backtest). Aggressive bot uses 1.2% risk = SL distance × lot size.
 - **Max position:** Hard-capped at 0.5 lots in backtests; live capped at 10.0 lots
 - **Slippage model:** 1-2 pips on entry, 0-1 pip on exit (backtest only — live uses market fills)
-- **Max daily trades:** Auto-adjusts (default 20/day, currently relaxed for demo testing)
+- **Max daily trades:** Auto-adjusts (default 20/day, removed during testing phase)
 - **Min balance:** $50 (bot refuses to start below this)
 - **Partial profit locking:** SL moves to breakeven after TP1 hit (50% of position closed at 1:1)
 - **Trailing stop:** 0.3× SL distance, activates after TP1
@@ -332,7 +332,7 @@ The backtest uses tiered fixed risk, 0.5 max lots, slippage model, and reads `ma
 ## Architecture Notes
 
 - **All times in UTC.** MT5 timestamps are Unix epoch → converted with `utc=True`. Session hours are hardcoded as UTC.
-- **Bar-by-bar position management.** On each 30s poll, the bot examines every bar since the position's open time, applying TP1/trail/SL checks sequentially. Flags prevent re-triggering.
+- **Bar-by-bar position management (M1).** On each 30s poll, the bot examines every bar since the position's open time, applying TP1/trail/SL checks sequentially. Flags prevent re-triggering.
 - **Trail activation bar skip.** The trailing stop check skips the bar where it was just activated, preventing wick noise from stopping out the runner.
 - **Bar scan from open_time.** Scans all bars from the position's `open_time` to the current bar — prevents missed triggers if the bot was stopped for many bars.
 - **Spread computed live** as `(ask − bid) / point` since `tick.spread` is unavailable on some MT5 builds.

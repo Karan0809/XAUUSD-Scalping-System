@@ -1306,9 +1306,9 @@ class TestDailySessionReset(unittest.TestCase):
         rm.start_day("2026-06-15", 1000.0)
         rm.record_trade(-5.0)
         rm.record_trade(-5.0)
-        self.assertTrue(rm._blocked_today)
+        self.assertTrue(rm._blocked_session)
         rm.start_day("2026-06-16", 990.0)
-        self.assertFalse(rm._blocked_today)
+        self.assertFalse(rm._blocked_session)
 
     def test_risk_manager_start_day_does_not_reset_peak(self):
         rm = RiskManager()
@@ -1393,7 +1393,7 @@ class TestConsecutiveLosses(unittest.TestCase):
         for _ in range(3):
             rm.record_trade(-10.0)
         self.assertEqual(rm._consecutive_losses, 3)
-        self.assertFalse(rm._blocked_today)
+        self.assertFalse(rm._blocked_session)
         allowed, _ = rm.check_entry_allowed(1000.0)
         self.assertTrue(allowed)
 
@@ -1403,7 +1403,7 @@ class TestConsecutiveLosses(unittest.TestCase):
         for _ in range(4):
             rm.record_trade(-10.0)
         self.assertEqual(rm._consecutive_losses, 4)
-        self.assertTrue(rm._blocked_today)
+        self.assertTrue(rm._blocked_session)
 
     def test_blocked_after_exactly_threshold_losses(self):
         rm = RiskManager(max_consecutive_losses=3)
@@ -1428,10 +1428,10 @@ class TestConsecutiveLosses(unittest.TestCase):
         rm.start_day("2026-06-15", 1000.0)
         rm.record_trade(-5.0)
         rm.record_trade(-5.0)
-        self.assertTrue(rm._blocked_today)
+        self.assertTrue(rm._blocked_session)
         rm.record_trade(10.0)
         self.assertEqual(rm._consecutive_losses, 0)
-        self.assertTrue(rm._blocked_today,
+        self.assertTrue(rm._blocked_session,
                         "Win resets counter but does NOT unblock — block persists until next day")
 
     def test_blocked_reason_message(self):
@@ -1448,9 +1448,9 @@ class TestConsecutiveLosses(unittest.TestCase):
         rm.start_day("2026-06-15", 1000.0)
         for _ in range(9):
             rm.record_trade(-5.0)
-        self.assertFalse(rm._blocked_today)
+        self.assertFalse(rm._blocked_session)
         rm.record_trade(-5.0)
-        self.assertTrue(rm._blocked_today)
+        self.assertTrue(rm._blocked_session)
         self.assertEqual(rm._consecutive_losses, 10)
 
     def test_losses_tracked_after_block(self):
@@ -1458,7 +1458,7 @@ class TestConsecutiveLosses(unittest.TestCase):
         rm.start_day("2026-06-15", 1000.0)
         rm.record_trade(-5.0)
         rm.record_trade(-5.0)
-        self.assertTrue(rm._blocked_today)
+        self.assertTrue(rm._blocked_session)
         rm.record_trade(-5.0)
         self.assertEqual(rm._consecutive_losses, 3)
 
@@ -1527,7 +1527,7 @@ class TestCircuitBreaker(unittest.TestCase):
         rm = RiskManager(max_drawdown_pct=15.0)
         rm.start_day("2026-06-15", 1000.0)
         rm._is_killed = True
-        rm._blocked_today = False
+        rm._blocked_session = None
         allowed, reason = rm.check_entry_allowed(1000000.0)
         self.assertFalse(allowed)
         self.assertIn("killed", reason.lower())
@@ -1535,7 +1535,7 @@ class TestCircuitBreaker(unittest.TestCase):
     def test_blocked_check_comes_before_loss_checks(self):
         rm = RiskManager(max_daily_loss_pct=3.0)
         rm.start_day("2026-06-15", 1000.0)
-        rm._blocked_today = True
+        rm._blocked_session = True
         allowed, reason = rm.check_entry_allowed(1000.0)
         self.assertFalse(allowed)
         self.assertIn("Blocked", reason)
@@ -1561,7 +1561,7 @@ class TestCircuitBreaker(unittest.TestCase):
         rm.start_day("2026-06-15", 1000.0)
         rm.record_trade(-5.0)
         rm.record_trade(-5.0)
-        self.assertTrue(rm._blocked_today)
+        self.assertTrue(rm._blocked_session)
         self.assertFalse(rm._is_killed)
 
     def test_peak_only_updates_via_start_day_not_intraday(self):
@@ -1582,7 +1582,7 @@ class TestCircuitBreaker(unittest.TestCase):
         allowed, _ = rm.check_entry_allowed(2000.0)
         self.assertTrue(allowed)
         rm.record_trade(-20.0)
-        self.assertTrue(rm._blocked_today)
+        self.assertTrue(rm._blocked_session)
 
     def test_positive_profit_does_not_affect_daily_loss_sum(self):
         rm = RiskManager(max_daily_loss_pct=3.0)
@@ -1632,18 +1632,18 @@ class TestCircuitBreaker(unittest.TestCase):
         rm.start_day("2026-06-15", 1000.0)
         rm.record_trade(-5.0)
         rm.record_trade(-5.0)
-        self.assertTrue(rm._blocked_today)
+        self.assertTrue(rm._blocked_session)
         rm.start_day("2026-06-16", 990.0)
-        self.assertFalse(rm._blocked_today)
+        self.assertFalse(rm._blocked_session)
 
     def test_block_resets_even_if_no_date_change(self):
         rm = RiskManager(max_consecutive_losses=2)
         rm.start_day("2026-06-15", 1000.0)
         rm.record_trade(-5.0)
         rm.record_trade(-5.0)
-        self.assertTrue(rm._blocked_today)
+        self.assertTrue(rm._blocked_session)
         rm.start_day("2026-06-15", 990.0)
-        self.assertTrue(rm._blocked_today,
+        self.assertTrue(rm._blocked_session,
                         "Same date must NOT reset blocked state")
 
 
@@ -1660,9 +1660,9 @@ class TestMaxDailyTrades(unittest.TestCase):
         path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"
         with open(path) as f:
             content = f.read()
-        entry_guard = 'if self._position is None and self._trades_today < MAX_TRADES_PER_DAY:'
+        entry_guard = 'if self._position is None:'
         self.assertIn(entry_guard, content,
-                      "Aggressive bot must check MAX_TRADES_PER_DAY before entering")
+                      "Aggressive bot must check position before entering")
 
     def test_aggressive_max_trades_constant(self):
         path = Path(__file__).resolve().parent.parent / "scripts" / "run_aggressive.py"

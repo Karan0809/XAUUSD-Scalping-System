@@ -18,16 +18,27 @@ class RiskManager:
         self._peak_balance = 0.0
         self._consecutive_losses = 0
         self._current_date: Optional[str] = None
-        self._blocked_today = False
+        self._current_session: Optional[str] = None
+        self._blocked_session: Optional[str] = None
         self._is_killed = False
         self._trades_today = 0
+
+    def start_session(self, session_name: str) -> None:
+        if self._current_session != session_name:
+            self._current_session = session_name
+            self._blocked_session = None
+            self._consecutive_losses = 0
+            logger.info(
+                f"RiskManager: session {session_name} — "
+                f"reset consecutive losses/block"
+            )
 
     def start_day(self, date_str: str, balance: float) -> None:
         if self._current_date != date_str:
             self._current_date = date_str
             self._daily_loss_sum = 0.0
             self._trades_today = 0
-            self._blocked_today = False
+            self._blocked_session = None
             self._consecutive_losses = 0
             if balance > self._peak_balance:
                 self._peak_balance = balance
@@ -38,10 +49,11 @@ class RiskManager:
             self._daily_loss_sum += abs(profit)
             self._consecutive_losses += 1
             if self._consecutive_losses >= self._max_consecutive_losses:
-                self._blocked_today = True
+                self._blocked_session = self._current_session or "day"
+                session_label = self._blocked_session
                 logger.warning(
                     f"RiskManager: {self._consecutive_losses} consecutive losses, "
-                    f"blocked for rest of day"
+                    f"blocked for {session_label}"
                 )
         else:
             self._consecutive_losses = 0
@@ -65,41 +77,44 @@ class RiskManager:
         return self._max_drawdown_pct
 
     def check_entry_allowed(self, balance: float) -> Tuple[bool, Optional[str]]:
-        # NOTE: Demo mode — all risk limits disabled
-        # Uncomment blocks below for live trading:
-        #
-        # if self._is_killed:
-        #     return False, "Drawdown limit exceeded — killed"
-        #
-        # if self._consecutive_losses >= self._max_consecutive_losses:
-        #     self._blocked_today = True
-        #     reason = f"Blocked: {self._consecutive_losses} consecutive losses"
-        #     logger.warning(f"RiskManager: {reason}")
-        #     return False, reason
-        #
-        # if self._blocked_today:
-        #     return False, "Blocked for rest of day"
-        #
-        # if balance > self._peak_balance:
-        #     self._peak_balance = balance
-        #
-        # daily_loss_pct = (self._daily_loss_sum / balance * 100) if balance > 0 else 0
-        # max_daily = self._get_effective_max_daily_loss_pct(balance)
-        # if daily_loss_pct >= max_daily:
-        #     self._blocked_today = True
-        #     reason = f"Daily loss {daily_loss_pct:.1f}% exceeds {max_daily}% loss limit"
-        #     logger.warning(f"RiskManager: blocked — {reason}")
-        #     return False, reason
-        #
-        # peak = max(self._peak_balance, balance)
-        # if peak > 0:
-        #     drawdown_pct = (peak - balance) / peak * 100
-        #     max_dd = self._get_effective_max_drawdown_pct(balance)
-        #     if drawdown_pct >= max_dd:
-        #         self._is_killed = True
-        #         reason = f"Drawdown {drawdown_pct:.1f}% exceeds {max_dd}% limit — killed"
-        #         logger.warning(f"RiskManager: {reason}")
-        #         return False, reason
+        if self._is_killed:
+            return False, "Drawdown limit exceeded — killed"
+
+        if self._blocked_session is not None:
+            if self._current_session is None or self._current_session == self._blocked_session:
+                session_label = self._blocked_session or "day"
+                return False, f"Blocked for {session_label} ({self._consecutive_losses} consecutive losses)"
+
+        if self._consecutive_losses >= self._max_consecutive_losses:
+            self._blocked_session = self._current_session or "day"
+            session_label = self._blocked_session
+            logger.warning(
+                f"RiskManager: blocked — {self._consecutive_losses} consecutive losses for {session_label}"
+            )
+            return False, f"Blocked: {self._consecutive_losses} consecutive losses"
+
+        if balance > self._peak_balance:
+            self._peak_balance = balance
+
+        daily_loss_pct = (self._daily_loss_sum / balance * 100) if balance > 0 else 0
+        max_daily = self._get_effective_max_daily_loss_pct(balance)
+        if daily_loss_pct >= max_daily:
+            self._blocked_session = self._current_session or "day"
+            session_label = self._blocked_session
+            reason = f"Daily loss {daily_loss_pct:.1f}% exceeds {max_daily}% loss limit — blocked for {session_label}"
+            logger.warning(f"RiskManager: blocked — {reason}")
+            return False, reason
+
+        peak = max(self._peak_balance, balance)
+        if peak > 0:
+            drawdown_pct = (peak - balance) / peak * 100
+            max_dd = self._get_effective_max_drawdown_pct(balance)
+            if drawdown_pct >= max_dd:
+                self._is_killed = True
+                logger.warning(
+                    f"RiskManager: drawdown {drawdown_pct:.1f}% exceeds {max_dd}% — killed"
+                )
+                return False, f"Drawdown {drawdown_pct:.1f}% exceeds {max_dd}% limit"
 
         return True, None
 
@@ -109,4 +124,9 @@ class RiskManager:
 
     @property
     def is_blocked(self) -> bool:
-        return self._blocked_today or self._is_killed
+        if self._is_killed:
+            return True
+        if self._blocked_session is not None:
+            if self._current_session is None or self._current_session == self._blocked_session:
+                return True
+        return False
