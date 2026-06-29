@@ -28,9 +28,10 @@ class RiskManager:
             self._current_session = session_name
             self._blocked_session = None
             self._consecutive_losses = 0
+            self._daily_loss_sum = 0.0
             logger.info(
                 f"RiskManager: session {session_name} — "
-                f"reset consecutive losses/block"
+                f"reset consecutive losses/block/daily loss"
             )
 
     def start_day(self, date_str: str, balance: float) -> None:

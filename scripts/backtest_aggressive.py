@@ -159,20 +159,22 @@ def load_15min_data(start: datetime, end: datetime) -> pd.DataFrame:
         sys.exit(1)
 
 
-def get_risk_amount(profit: float) -> float:
-    if profit >= 50000:
-        return 50.0
-    elif profit >= 10000:
-        return 30.0
-    elif profit >= 2000:
-        return 20.0
-    elif profit >= 500:
-        return 15.0
-    return 10.0
+def get_risk_amount(balance: float, peak_balance: float) -> float:
+    dd_pct = (peak_balance - balance) / peak_balance * 100 if peak_balance > 0 else 0
+
+    if dd_pct <= 0:
+        risk_pct = 0.015  # 1.5% at equity peak
+    elif dd_pct >= 10:
+        risk_pct = 0.005  # 0.5% in deep drawdown
+    else:
+        risk_pct = 0.015 - (dd_pct / 10.0) * 0.01  # linear interpolate
+
+    risk_amount = balance * risk_pct
+    return round(min(max(risk_amount, 5.0), 50.0), 2)
 
 
-def calc_lot_size(balance: float, risk_pct: float, sl_dist: float, margin_rate: Optional[float] = None, profit: float = 0.0) -> float:
-    risk_amount = get_risk_amount(profit)
+def calc_lot_size(balance: float, risk_pct: float, sl_dist: float, margin_rate: Optional[float] = None, peak_balance: float = 0.0) -> float:
+    risk_amount = get_risk_amount(balance, peak_balance)
     risk_lots = round(risk_amount / (sl_dist * 100), 2)
     if margin_rate is not None and margin_rate > 0:
         margin_lots = max(0.01, round((balance * 0.9) / margin_rate, 2))
@@ -474,7 +476,7 @@ def main():
             else:
                 sl_dist = sl_price
 
-            lot_size = calc_lot_size(balance, risk_pct, sl_dist, margin_rate, profit=balance - args.balance)
+            lot_size = calc_lot_size(balance, risk_pct, sl_dist, margin_rate, peak_balance=peak_balance)
             if lot_size < 0.01:
                 continue
 
