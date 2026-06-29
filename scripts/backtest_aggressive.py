@@ -71,6 +71,10 @@ def parse_args():
                         help="SL mode: fixed (pips arg), min_sl (zone SL + 20pip min), atr (ATR*1.5)")
     parser.add_argument("--zone-buffer", type=float, default=0.15,
                         help="Buffer below/above zone edge for SL (default: 0.15 = 15 pips)")
+    parser.add_argument("--trail-multiplier", type=float, default=None,
+                        help="Override trail multiplier (default: from settings = 0.3)")
+    parser.add_argument("--max-lots", type=float, default=1.0,
+                        help="Max lot size per trade (0 = no cap, margin only)")
     parser.add_argument("--output", type=str, default="aggressive_results.json")
     return parser.parse_args()
 
@@ -159,28 +163,27 @@ def load_15min_data(start: datetime, end: datetime) -> pd.DataFrame:
         sys.exit(1)
 
 
-def get_risk_amount(balance: float, peak_balance: float) -> float:
-    dd_pct = (peak_balance - balance) / peak_balance * 100 if peak_balance > 0 else 0
-
-    if dd_pct <= 0:
-        risk_pct = 0.015  # 1.5% at equity peak
-    elif dd_pct >= 10:
-        risk_pct = 0.005  # 0.5% in deep drawdown
-    else:
-        risk_pct = 0.015 - (dd_pct / 10.0) * 0.01  # linear interpolate
-
-    risk_amount = balance * risk_pct
-    return round(min(max(risk_amount, 5.0), 50.0), 2)
+def get_risk_amount(profit: float, balance: float = 0.0) -> float:
+    if profit >= 50000:
+        return 50.0
+    elif profit >= 10000:
+        return 30.0
+    elif profit >= 2000:
+        return 20.0
+    elif profit >= 500:
+        return 15.0
+    return 10.0
 
 
-def calc_lot_size(balance: float, risk_pct: float, sl_dist: float, margin_rate: Optional[float] = None, peak_balance: float = 0.0) -> float:
-    risk_amount = get_risk_amount(balance, peak_balance)
+def calc_lot_size(balance: float, risk_pct: float, sl_dist: float, margin_rate: Optional[float] = None, profit: float = 0.0, max_lots: float = 0.5) -> float:
+    risk_amount = get_risk_amount(profit)
     risk_lots = round(risk_amount / (sl_dist * 100), 2)
     if margin_rate is not None and margin_rate > 0:
         margin_lots = max(0.01, round((balance * 0.9) / margin_rate, 2))
     else:
         margin_lots = 0.5
-    return max(0.01, round(min(risk_lots, margin_lots, 0.5), 2))
+    cap = max_lots if max_lots > 0 else 999.0
+    return max(0.01, round(min(risk_lots, margin_lots, cap), 2))
 
 
 def check_momentum(bars: pd.DataFrame, direction: str) -> bool:
@@ -251,6 +254,8 @@ def main():
     end = datetime.strptime(args.end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
     settings = get_settings()
+    if args.trail_multiplier is not None:
+        settings.trail_multiplier = args.trail_multiplier
 
     sl_pips = args.sl_pips
     sl_price = sl_pips / 100.0
@@ -476,7 +481,7 @@ def main():
             else:
                 sl_dist = sl_price
 
-            lot_size = calc_lot_size(balance, risk_pct, sl_dist, margin_rate, peak_balance=peak_balance)
+            lot_size = calc_lot_size(balance, risk_pct, sl_dist, margin_rate, profit=balance - args.balance, max_lots=args.max_lots)
             if lot_size < 0.01:
                 continue
 

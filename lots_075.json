@@ -1,0 +1,18 @@
+{
+  "total_trades": 1240,
+  "winning_trades": 968,
+  "losing_trades": 272,
+  "win_rate": 78.06,
+  "total_profit": 88207.59,
+  "final_balance": 89207.59,
+  "return_pct": 8820.76,
+  "profit_factor": 19.22,
+  "max_drawdown": 25.77177282591697,
+  "max_drawdown_pct": 1.58632229791237,
+  "avg_win": 96.13,
+  "avg_loss": -17.8,
+  "largest_win": 1083.13,
+  "largest_loss": -18.37,
+  "avg_bars_held": 1.4,
+  "total_commission": 3200.995
+}

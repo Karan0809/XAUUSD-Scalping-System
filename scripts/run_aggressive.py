@@ -120,7 +120,7 @@ class AggressiveBot:
 
     def _calc_lot_size(self, balance: float, sl_price: float = SL_PRICE) -> float:
         risk_amount = self._get_risk_amount(balance)
-        return max(0.01, min(round(risk_amount / (sl_price * 100), 2), 10.0))
+        return max(0.01, min(round(risk_amount / (sl_price * 100), 2), 1.0))
 
     def _get_zone_signal(self, price: float, dir_filter: Optional[str] = None):
         best_dist = float("inf")

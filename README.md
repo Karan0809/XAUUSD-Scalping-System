@@ -1,10 +1,12 @@
-# XAUUSD Scalper — Aggressive M1
+# XAUUSD Scalper — Aggressive M1 + Mindspace Engine
 
-Multi-session scalper for XAUUSD on MetaTrader 5 using an aggressive M1 zone + momentum strategy. Now running as a **single bot** (aggressive only) for simplicity and reliability.
+Multi-session scalper for XAUUSD on MetaTrader 5. Runs two bots:
+- **Aggressive M1**: Zone + momentum scalper on M1 bars (live-tested, 78% WR)
+- **Mindspace**: SMC/ICT strategy (CHOCH, FVG, ISS, TJL) on dual HTF+scalp engines (backtested, 53.69% WR, 1327% return)
 
-## Strategy
+## Strategy (Aggressive M1)
 
-The bot trades a **zone + momentum** strategy on M1 bars. It scans supply/demand zones from 90-day M15 data, waits for a pullback into a zone, and enters on momentum confirmation. The circuit breaker blocks per-session (Asia/London/NY) rather than full-day.
+The aggressive bot trades a **zone + momentum** strategy on M1 bars. It scans supply/demand zones from 90-day M15 data, waits for a pullback into a zone, and enters on momentum confirmation. The circuit breaker blocks per-session (Asia/London/NY) rather than full-day.
 
 ### Sessions
 
@@ -91,39 +93,40 @@ On every poll, the bot re-examines all M1 bars since entry (from the position's 
 
 ## Backtest Results (Sep 2025 – Jun 2026)
 
-Backtested on live M1 XAUUSD data across all sessions (Asia + London + NY). Commission: $3.50/lot/side. Uses tiered fixed risk ($10→$15→$20→$30→$50 based on profit milestones), 0.5 lots hard cap, 1-2 pip entry slippage, 0-1 pip exit slippage, `max_spread` from settings (default 60.0), and `trail_multiplier=0.2`.
+Backtested on live M1 XAUUSD data across all sessions (Asia + London + NY). Commission: $3.50/lot/side, 1-2 pip entry slippage, 0-1 pip exit slippage, `max_spread` from settings (default 60.0), `trail_multiplier=0.3`.
 
-### Aggressive M1 ($5,000 start)
+### Aggressive M1 ($1,000 start)
 
-Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-trend alignment + momentum check, and session filter (Asia + London + NY). Zone SL with 0.30 buffer, clamped between 0.30–5.0 (no fixed cap). Pullback filter (3.0 max dist from zone edge). 50/50 + trailing exit model.
+Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-trend alignment + momentum check, and session filter (Asia + London + NY). Zone SL with 0.30 buffer, clamped between 0.30–5.0. Pullback filter (3.0 max dist from zone edge). 50/50 + trailing exit model. Tiered fixed risk ($10→$15→$20→$30→$50 based on profit milestones), 1.0 lots hard cap.
 
 | Metric | Result |
 |---|---|
-| **Total Trades** | 1,470 |
-| **Win Rate** | 78.03% |
-| **Total Profit** | **$72,687** |
-| **Profit Factor** | 19.74 |
-| **Max Drawdown** | $36.09 (0.32%) |
-| **Avg Win / Loss** | +$66.75 / -$12.01 |
-| **Largest Win / Loss** | +$2,100.71 / -$12.24 |
+| **Total Trades** | 1,240 |
+| **Win Rate** | 78.06% |
+| **Total Profit** | **$115,239** |
+| **Profit Factor** | 18.96 |
+| **Max Drawdown** | $26.19 (1.61%) |
+| **Avg Win / Loss** | +$125.68 / -$23.59 |
+| **Largest Win / Loss** | +$1,425.49 / -$24.49 |
 | **Avg Bars Held** | 1.4 |
-| **Filters** | Zone=0 Mom=3,679 Trend=12,761 Spread=245 CB=0 News=0 |
-| **Return** | 1,454% |
+| **Filters** | Zone=0 Mom=3,173 Trend=10,685 Spread=201 CB=0 News=0 |
+| **Return** | 11,523% |
 
 > **Backtest vs live discrepancy:** Backtest uses bar-resolution SL (M1 high/low), which misses intra-bar spikes. Live tick-level volatility can hit SL ~4-8 points earlier than backtest suggests. The widened SL (up to 5.0) and pullback filter compensate for this gap.
 
 ### Key Fixes Applied
 
 | Fix | Impact |
-|---|---|
+|---|---|---|
 | **Tiered fixed risk** ($10→$15→$20→$30→$50 based on profit) | Replaces flat $10 — grows with account without compounding explosion. |
-| **0.5 lots hard cap** (was 10.0) | Limits position size regardless of account growth. |
+| **1.0 lots hard cap** (was 10.0, later tightened from 0.5 backtest cap) | Limits position size while allowing room to scale. At $2,300 balance, margin naturally limits to ~0.51 lots; cap only binds once account exceeds ~$4,500. Backtested: 1.0 cap yields +92% profit over 0.5 cap with same 1.6% max DD. |
+| **Trail multiplier 0.3** (was 0.2) | Wider trail reduces premature exits; backtest confirmed 0.3 is optimal for the 78% WR strategy. |
 | **Slippage model** (1-2 pip entry, 0-1 pip exit) | More realistic fills, prevents edge-case overperformance. |
 | **`elif` in session/date reset** | Stopped double-reset bug that cleared `_entry_triggered`, causing duplicate entries. |
 | **3-bar minimum gap** | Safety net preventing re-entry within same session after a close. |
 | **Recovery entries** | After a loss, next entry tightens SL using M5 swing level — same risk, larger size. |
 | **Spread filter 20 points** (was 60) | Blocks wider spreads — safer for tight SL scalping. |
-| **Multi-env with `--env` CLI flag** | Run multiple bots simultaneously on separate MT5 accounts via `.env.orb` / `.env.aggressive`. |
+| **Multi-env with `--env` CLI flag** | Run multiple bots simultaneously on separate MT5 accounts via `.env.aggressive` / `.env.mindspace`. |
 | **Lazy env loading in settings.py** | `field(default_factory=...)` evaluates env vars after `load_dotenv()`, preventing stale values. |
 | **Settings cache order** | `setup_logging()` moved after bot init so the correct env file sets the global cache first. |
 | **`mt5.login()` after `initialize()`** | Explicitly logs into the account from the env file instead of reusing the terminal's cached session. |
@@ -160,7 +163,7 @@ Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-
 | **Per-trade-loop account re-verification** | After `get_account_info()`, checks `acct["login"]` matches env setting. M15 data loads reverting MT5 login are detected and corrected mid-loop. |
 | **Zone-SL cap removed** | Zone distance was capped at 0.80, forcing SL to 80 points regardless of market structure. Now uses `min(raw_dist, 5.0)` — SL matches zone depth (30–500 points). Fixes root cause of 30-60s stopouts. |
 | **Circuit breaker re-enabled** | Was completely commented out returning `(True, None)`. Logs showed 4-7 consecutive losses reached but bot kept trading. Now checks consecutive losses, daily loss %, drawdown. |
-| **Circuit breaker per-session** | Changed from full-day `_blocked_today` to per-session `_blocked_session`. Block auto-clears on Asia/London/NY session change. |
+| **Circuit breaker per-session** | Changed from full-day `_blocked_today` to per-session `_blocked_session`. Block auto-clears at session change; `_daily_loss_sum` also resets so a new session isn't blocked by the prior session's losses. |
 | **Max trades per day disabled** | Line 640 check was commented out — bot traded unlimited daily. Uncommented for now (removed during testing). |
 | **Pullback filter added** | Enters only when price is within 3.0 of zone edge. Calibrated from backtesting: baseline 65.7% WR (1,263 trades) vs pullback 3.0 at 69.6% WR (161 trades). |
 | **Zone buffer 0.15 → 0.30** | Increased buffer added to zone edge for SL calculation — gives trades more breathing room from zone boundary. |
@@ -174,18 +177,31 @@ Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-
 ├── connectors/
 │   └── mt5_connector.py         # MetaTrader 5 wrapper (rates, orders, positions, modify)
 ├── core/
-│   ├── opening_range_scalp.py   # ORB strategy logic & signal generation
 │   ├── institutional_zone.py    # Supply/demand zone detection
-│   ├── risk_manager.py          # Risk controls (daily loss, consecutive losses, drawdown)
+│   ├── risk_manager.py          # Risk controls (daily loss, consecutive losses, drawdown, per-session CB)
 │   ├── news_filter.py           # ForexFactory news blackout filter
-│   └── session_validator.py     # Session day validation
+│   ├── session_validator.py     # Session day validation
+│   └── mindspace/               # SMC/ICT engine modules
+│       ├── models.py            # Signal, ISSZone data classes
+│       ├── structures.py        # Structure marker (swing points)
+│       ├── choch.py             # Change of character detector
+│       ├── levels.py            # SBR/RBS/QML/DB/DT levels
+│       ├── supply_demand.py     # Order block detector
+│       ├── fvg.py               # Fair value gap detector
+│       ├── iss.py               # 5-wave ISS detector
+│       ├── tjl.py               # TJL1/QML and TJL2 engine
+│       ├── mtf.py               # Multi-timeframe analyzer (Cond 1/2/3)
+│       └── engine.py            # Mindspace orchestrator
 ├── database/
 │   └── mongo_client.py          # MongoDB persistence (trades, signals, metrics)
 ├── log_utils/
 │   └── logger_setup.py          # Structured JSON logging (console + file)
 ├── scripts/
-│   ├── backtest_aggressive.py   # Historical backtester
-│   └── run_aggressive.py        # Live trading bot
+│   ├── backtest_aggressive.py   # Historical backtester (zone + momentum)
+│   ├── backtest_mindspace.py    # Historical backtester (SMC/ICT dual engine)
+│   ├── run_aggressive.py        # Live trading bot (aggressive M1)
+│   ├── run_mindspace.py         # Live trading bot (mindspace SMC/ICT)
+│   └── run_both.ps1             # Launcher — starts both bots in separate windows
 ├── telegram/
 │   └── alerts.py                # Telegram notifications (open/close/error/heartbeat)
 ├── tests/
@@ -241,18 +257,20 @@ The `--env` path resolves relative to the project root (not the working director
 ### Key Settings (`config/settings.py`)
 
 | Setting | Default | Description |
-|---|---|---|
-| `risk_percent` | 2.0 | Risk per trade (% of balance) — backtests use tiered fixed risk |
+|---|---|---|---|
+| `risk_percent` | 2.0 | Risk per trade (% of balance) — aggressive bot uses tiered fixed risk |
 | `max_daily_trades` | 15 | Max trades per day |
 | `max_spread` | 60.0 | Max spread in points before skipping entry |
-| `trail_multiplier` | 0.2 | Trailing stop distance = multiplier × SL distance (0.2 outperforms 0.3 across all metrics) |
+| `trail_multiplier` | 0.3 | Trailing stop distance = multiplier × SL distance (0.3 optimal for 78% WR aggressive bot) |
 | `trailing_stop_enabled` | True | Master toggle for trailing stop logic |
-| `circuit_breaker_max_daily_loss_pct` | 3.0 | Daily loss limit (%) — blocks new entries |
+| `circuit_breaker_max_daily_loss_pct` | 10.0 | Daily loss limit (%) — blocks current session only (resets on session change) |
 | `circuit_breaker_max_consecutive_losses` | 4 | Max consecutive losses before pause |
 | `circuit_breaker_max_drawdown_pct` | 15.0 | Max drawdown from peak (%) — kill switch |
 | `news_filter_enabled` | False | Enable ForexFactory news blackout (US Eastern → UTC) |
 | `news_blackout_minutes` | 30 | Minutes before/after high-impact event to block entry |
 | `backtest_commission` | 3.5 | Commission per lot per side ($) |
+| `max_trades_per_day` | 5 | Max trades per day (mindspace bot) |
+| `strategy_label` | "Mindspace" | Strategy tag for logs and DB |
 ## Usage
 
 ### Live Trading
@@ -290,28 +308,32 @@ python -m pytest tests/ -k TestMongoWriteFailure -v
 ### Backtesting
 
 ```bash
-python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-22 --balance 5000 --risk 1.2 --sl-mode min_sl --zone-buffer 0.30 --pullback 3.0 --session-filter
+python scripts/backtest_aggressive.py --start 2025-09-01 --end 2026-06-22 --balance 1000 --sl-mode min_sl --zone-buffer 0.30 --max-lots 1.0
 ```
 
-The backtest uses tiered fixed risk, 0.5 max lots, slippage model, and reads `max_spread` from settings. Results saved as JSON with `--output`.
+Backtest uses tiered fixed risk ($10–$50), 1.0 max lots, slippage model, and reads `max_spread` from settings. Results saved as JSON with `--output`.
 
-- `--risk <pct>` — risk percent
-- `--sl-mode min_sl` — zone-based SL with minimum distance floor
-- `--zone-buffer <pips>` — buffer added to zone edge for SL
-- `--session-filter` — restrict to Asia/London/NY sessions
-- `--output <file>` — save results as JSON
+| Arg | Default | Description |
+|---|---|---|
+| `--risk <pct>` | 1.2 | Risk percent (used for legacy; aggressive bot uses fixed tiers) |
+| `--sl-mode` | `min_sl` | SL mode: `fixed` (pips), `min_sl` (zone + 20 pip min), `atr` (ATR×1.5) |
+| `--zone-buffer <pips>` | 0.15 | Buffer added to zone edge for SL |
+| `--session-filter` | off | Restrict to London (9-12) + NY (13-16) sessions |
+| `--trail-multiplier` | from settings (0.3) | Override trail distance multiplier |
+| `--max-lots` | 1.0 | Max lot size per trade (0 = no cap, margin only) |
+| `--output <file>` | `aggressive_results.json` | Save results as JSON |
 
 ## Risk Management
 
-- **Risk per trade:** %-of-balance (live) or tiered fixed risk (backtest). Aggressive bot uses 1.2% risk = SL distance × lot size.
-- **Max position:** Hard-capped at 0.5 lots in backtests; live capped at 10.0 lots
+- **Risk per trade:** Tiered fixed risk ($10→$15→$20→$30→$50 based on profit milestones). Aggressive bot uses fixed dollar amounts (not %-of-balance) to avoid compounding explosion at high WR.
+- **Max position:** 1.0 lots hard cap (both backtest and live). Margin auto-limits to ~0.51 lots at $2,300 balance; the cap only binds when account exceeds ~$4,500.
 - **Slippage model:** 1-2 pips on entry, 0-1 pip on exit (backtest only — live uses market fills)
-- **Max daily trades:** Auto-adjusts (default 20/day, removed during testing phase)
+- **Max daily trades:** 15/day (aggressive), 5/day (mindspace)
 - **Min balance:** $50 (bot refuses to start below this)
 - **Partial profit locking:** SL moves to breakeven after TP1 hit (50% of position closed at 1:1)
 - **Trailing stop:** 0.3× SL distance, activates after TP1
-- **Spread filter:** Skips entry if spread > 20 points, sleeps 10s
-- **Circuit breaker:** Daily loss / consecutive loss / drawdown limits (configurable); currently relaxed for demo
+- **Spread filter:** Skips entry if spread > 60 points (default), sleeps 10s
+- **Circuit breaker:** Per-session (not per-day). Daily loss / consecutive loss / drawdown limits block only the current session; block and daily loss sum auto-reset on Asia/London/NY session change.
 - **News filter:** (Optional) blocks entry during high-impact USD events (ForexFactory)
 - **Commission:** $3.50 per lot per side (built into all calculations)
 
