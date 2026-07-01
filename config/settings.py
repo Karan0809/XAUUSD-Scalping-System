@@ -38,7 +38,6 @@ class ScalperSettings:
     trail_multiplier: float = 0.5
 
     max_trades_per_day: int = 5
-    strategy_label: str = "Mindspace"
 
     news_filter_enabled: bool = False
     news_blackout_minutes: int = 30

@@ -1,8 +1,6 @@
-# XAUUSD Scalper — Aggressive M1 + Mindspace Engine
+# XAUUSD Scalper — Aggressive M1
 
-Multi-session scalper for XAUUSD on MetaTrader 5. Runs two bots:
-- **Aggressive M1**: Zone + momentum scalper on M1 bars (live-tested, 78% WR)
-- **Mindspace**: SMC/ICT strategy (CHOCH, FVG, ISS, TJL) on dual HTF+scalp engines (backtested, 53.69% WR, 1327% return)
+Multi-session scalper for XAUUSD on MetaTrader 5. Zone + momentum scalper on M1 bars (live-tested, 78% WR).
 
 ## Strategy (Aggressive M1)
 
@@ -87,7 +85,7 @@ On every poll, the bot re-examines all M1 bars since entry (from the position's 
 | Filter | Description | Default |
 |---|---|---|
 | **Spread filter** | Skips entries when spread exceeds threshold | 60 pips |
-| **Circuit breaker** | Blocks new entries on 3% daily loss, 4 consecutive losses, or 15% drawdown from peak; blocks per-session (resets on Asia/London/NY change); sends Telegram alert on first block | On |
+| **Circuit breaker** | Blocks new entries on 4 consecutive losses; blocks per-session (resets on Asia/London/NY change); sends Telegram alert on first block | On |
 | **News filter** | Optional — blocks entry 30 min before/after high-impact USD events (ForexFactory) | Off |
 | **Friday shutdown** | Bot disconnects at 17:00 UTC Friday, sleeps until Monday 00:00 UTC | Auto |
 
@@ -126,7 +124,7 @@ Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-
 | **3-bar minimum gap** | Safety net preventing re-entry within same session after a close. |
 | **Recovery entries** | After a loss, next entry tightens SL using M5 swing level — same risk, larger size. |
 | **Spread filter 20 points** (was 60) | Blocks wider spreads — safer for tight SL scalping. |
-| **Multi-env with `--env` CLI flag** | Run multiple bots simultaneously on separate MT5 accounts via `.env.aggressive` / `.env.mindspace`. |
+| **Multi-env with `--env` CLI flag** | Run multiple bots simultaneously on separate MT5 accounts via `.env.aggressive`. |
 | **Lazy env loading in settings.py** | `field(default_factory=...)` evaluates env vars after `load_dotenv()`, preventing stale values. |
 | **Settings cache order** | `setup_logging()` moved after bot init so the correct env file sets the global cache first. |
 | **`mt5.login()` after `initialize()`** | Explicitly logs into the account from the env file instead of reusing the terminal's cached session. |
@@ -181,27 +179,13 @@ Trades M1 bars using zone-based entries with EMA50 trend slope filter, M1 micro-
 │   ├── risk_manager.py          # Risk controls (daily loss, consecutive losses, drawdown, per-session CB)
 │   ├── news_filter.py           # ForexFactory news blackout filter
 │   ├── session_validator.py     # Session day validation
-│   └── mindspace/               # SMC/ICT engine modules
-│       ├── models.py            # Signal, ISSZone data classes
-│       ├── structures.py        # Structure marker (swing points)
-│       ├── choch.py             # Change of character detector
-│       ├── levels.py            # SBR/RBS/QML/DB/DT levels
-│       ├── supply_demand.py     # Order block detector
-│       ├── fvg.py               # Fair value gap detector
-│       ├── iss.py               # 5-wave ISS detector
-│       ├── tjl.py               # TJL1/QML and TJL2 engine
-│       ├── mtf.py               # Multi-timeframe analyzer (Cond 1/2/3)
-│       └── engine.py            # Mindspace orchestrator
 ├── database/
 │   └── mongo_client.py          # MongoDB persistence (trades, signals, metrics)
 ├── log_utils/
 │   └── logger_setup.py          # Structured JSON logging (console + file)
 ├── scripts/
 │   ├── backtest_aggressive.py   # Historical backtester (zone + momentum)
-│   ├── backtest_mindspace.py    # Historical backtester (SMC/ICT dual engine)
-│   ├── run_aggressive.py        # Live trading bot (aggressive M1)
-│   ├── run_mindspace.py         # Live trading bot (mindspace SMC/ICT)
-│   └── run_both.ps1             # Launcher — starts both bots in separate windows
+│   └── run_aggressive.py        # Live trading bot (aggressive M1)
 ├── telegram/
 │   └── alerts.py                # Telegram notifications (open/close/error/heartbeat)
 ├── tests/
@@ -263,14 +247,11 @@ The `--env` path resolves relative to the project root (not the working director
 | `max_spread` | 60.0 | Max spread in points before skipping entry |
 | `trail_multiplier` | 0.3 | Trailing stop distance = multiplier × SL distance (0.3 optimal for 78% WR aggressive bot) |
 | `trailing_stop_enabled` | True | Master toggle for trailing stop logic |
-| `circuit_breaker_max_daily_loss_pct` | 10.0 | Daily loss limit (%) — blocks current session only (resets on session change) |
-| `circuit_breaker_max_consecutive_losses` | 4 | Max consecutive losses before pause |
-| `circuit_breaker_max_drawdown_pct` | 15.0 | Max drawdown from peak (%) — kill switch |
+| `circuit_breaker_max_consecutive_losses` | 4 | Max consecutive losses before pause (only CB check active) |
 | `news_filter_enabled` | False | Enable ForexFactory news blackout (US Eastern → UTC) |
 | `news_blackout_minutes` | 30 | Minutes before/after high-impact event to block entry |
 | `backtest_commission` | 3.5 | Commission per lot per side ($) |
-| `max_trades_per_day` | 5 | Max trades per day (mindspace bot) |
-| `strategy_label` | "Mindspace" | Strategy tag for logs and DB |
+
 ## Usage
 
 ### Live Trading
@@ -328,12 +309,12 @@ Backtest uses tiered fixed risk ($10–$50), 1.0 max lots, slippage model, and r
 - **Risk per trade:** Tiered fixed risk ($10→$15→$20→$30→$50 based on profit milestones). Aggressive bot uses fixed dollar amounts (not %-of-balance) to avoid compounding explosion at high WR.
 - **Max position:** 1.0 lots hard cap (both backtest and live). Margin auto-limits to ~0.51 lots at $2,300 balance; the cap only binds when account exceeds ~$4,500.
 - **Slippage model:** 1-2 pips on entry, 0-1 pip on exit (backtest only — live uses market fills)
-- **Max daily trades:** 15/day (aggressive), 5/day (mindspace)
+- **Max daily trades:** 15/day
 - **Min balance:** $50 (bot refuses to start below this)
 - **Partial profit locking:** SL moves to breakeven after TP1 hit (50% of position closed at 1:1)
 - **Trailing stop:** 0.3× SL distance, activates after TP1
 - **Spread filter:** Skips entry if spread > 60 points (default), sleeps 10s
-- **Circuit breaker:** Per-session (not per-day). Daily loss / consecutive loss / drawdown limits block only the current session; block and daily loss sum auto-reset on Asia/London/NY session change.
+- **Circuit breaker:** Per-session (not per-day). Blocks on 4 consecutive losses; auto-resets on Asia/London/NY session change.
 - **News filter:** (Optional) blocks entry during high-impact USD events (ForexFactory)
 - **Commission:** $3.50 per lot per side (built into all calculations)
 
