@@ -97,25 +97,27 @@ class RiskManager:
         if balance > self._peak_balance:
             self._peak_balance = balance
 
-        daily_loss_pct = (self._daily_loss_sum / balance * 100) if balance > 0 else 0
-        max_daily = self._get_effective_max_daily_loss_pct(balance)
-        if daily_loss_pct >= max_daily:
-            self._blocked_session = self._current_session or "day"
-            session_label = self._blocked_session
-            reason = f"Daily loss {daily_loss_pct:.1f}% exceeds {max_daily}% loss limit — blocked for {session_label}"
-            logger.warning(f"RiskManager: blocked — {reason}")
-            return False, reason
+        # --- daily loss check (commented: uncomment to re-enable) ---
+        # daily_loss_pct = (self._daily_loss_sum / balance * 100) if balance > 0 else 0
+        # max_daily = self._get_effective_max_daily_loss_pct(balance)
+        # if daily_loss_pct >= max_daily:
+        #     self._blocked_session = self._current_session or "day"
+        #     session_label = self._blocked_session
+        #     reason = f"Daily loss {daily_loss_pct:.1f}% exceeds {max_daily}% loss limit — blocked for {session_label}"
+        #     logger.warning(f"RiskManager: blocked — {reason}")
+        #     return False, reason
 
-        peak = max(self._peak_balance, balance)
-        if peak > 0:
-            drawdown_pct = (peak - balance) / peak * 100
-            max_dd = self._get_effective_max_drawdown_pct(balance)
-            if drawdown_pct >= max_dd:
-                self._is_killed = True
-                logger.warning(
-                    f"RiskManager: drawdown {drawdown_pct:.1f}% exceeds {max_dd}% — killed"
-                )
-                return False, f"Drawdown {drawdown_pct:.1f}% exceeds {max_dd}% limit"
+        # --- drawdown check (commented: uncomment to re-enable) ---
+        # peak = max(self._peak_balance, balance)
+        # if peak > 0:
+        #     drawdown_pct = (peak - balance) / peak * 100
+        #     max_dd = self._get_effective_max_drawdown_pct(balance)
+        #     if drawdown_pct >= max_dd:
+        #         self._is_killed = True
+        #         logger.warning(
+        #             f"RiskManager: drawdown {drawdown_pct:.1f}% exceeds {max_dd}% — killed"
+        #         )
+        #         return False, f"Drawdown {drawdown_pct:.1f}% exceeds {max_dd}% limit"
 
         return True, None
 
